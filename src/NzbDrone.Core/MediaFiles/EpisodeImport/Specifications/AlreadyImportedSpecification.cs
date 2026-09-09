@@ -38,7 +38,10 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport.Specifications
                     continue;
                 }
 
-                var episodeHistory = _historyService.FindByEpisodeId(episode.Id);
+                var episodeHistory = _historyService.FindByEpisodeId(episode.Id)
+                    .Where(h => localEpisode.TargetQualityTrackIds == null ||
+                        (QualityTrackSnapshot.ReadTargets(h.Data) ?? QualityTrackSnapshot.LegacyTargets(localEpisode.Series))
+                        .Intersect(localEpisode.TargetQualityTrackIds).Any()).ToList();
                 var lastImported = episodeHistory.FirstOrDefault(h =>
                     h.DownloadId == downloadClientItem.DownloadId &&
                     h.EventType == EpisodeHistoryEventType.DownloadFolderImported);

@@ -94,6 +94,29 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         }
 
         [Test]
+        public void should_rank_each_track_with_its_own_quality_order()
+        {
+            var firstLow = GivenRemoteEpisode([GivenEpisode(1)], new QualityModel(Quality.SDTV), Language.English);
+            var firstHigh = GivenRemoteEpisode([GivenEpisode(1)], new QualityModel(Quality.HDTV720p), Language.English);
+            firstLow.TargetQualityTrackIds = [10];
+            firstHigh.TargetQualityTrackIds = [10];
+            var secondLow = GivenRemoteEpisode([GivenEpisode(1)], new QualityModel(Quality.SDTV), Language.English);
+            var secondHigh = GivenRemoteEpisode([GivenEpisode(1)], new QualityModel(Quality.HDTV720p), Language.English);
+            var reverse = _series.Clone();
+            reverse.QualityProfile = new QualityProfile { Items = _series.QualityProfile.Value.Items.AsEnumerable().Reverse().ToList() };
+            secondLow.Series = reverse;
+            secondHigh.Series = reverse;
+            secondLow.TargetQualityTrackIds = [20];
+            secondHigh.TargetQualityTrackIds = [20];
+
+            var result = Subject.PrioritizeDecisions([new DownloadDecision(firstLow), new DownloadDecision(secondHigh), new DownloadDecision(firstHigh), new DownloadDecision(secondLow)]);
+
+            result.Select(d => d.RemoteEpisode.TargetQualityTrackIds.Single()).Should().Equal(10, 10, 20, 20);
+            result[0].RemoteEpisode.Should().BeSameAs(firstHigh);
+            result[2].RemoteEpisode.Should().BeSameAs(secondLow);
+        }
+
+        [Test]
         public void should_put_reals_before_non_reals()
         {
             var remoteEpisode1 = GivenRemoteEpisode(new List<Episode> { GivenEpisode(1) }, new QualityModel(Quality.HDTV720p, new Revision(version: 1, real: 0)), Language.English);

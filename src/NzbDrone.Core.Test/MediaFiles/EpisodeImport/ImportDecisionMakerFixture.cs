@@ -37,6 +37,10 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
         [SetUp]
         public void Setup()
         {
+            Mocker.GetMock<ISeriesQualityTrackService>()
+                .Setup(s => s.GetEnabledTracks(It.IsAny<int>()))
+                .Returns(new List<SeriesQualityTrack>());
+
             _pass1 = new Mock<IImportDecisionEngineSpecification>();
             _pass2 = new Mock<IImportDecisionEngineSpecification>();
             _pass3 = new Mock<IImportDecisionEngineSpecification>();
@@ -65,7 +69,7 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
                 Series = _series,
                 Quality = _quality,
                 Languages = new List<Language> { Language.Spanish },
-                Episodes = new List<Episode> { new Episode() },
+                Episodes = new List<Episode> { new Episode { Id = 1, SeriesId = _series.Id } },
                 Path = @"C:\Test\Unsorted\The.Office.S03E115.DVDRip.Spanish.XviD-OSiTV.avi"
             };
 

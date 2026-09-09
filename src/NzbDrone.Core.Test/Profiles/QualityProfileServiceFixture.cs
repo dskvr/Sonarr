@@ -73,6 +73,29 @@ namespace NzbDrone.Core.Test.Profiles
         }
 
         [Test]
+        public void should_not_delete_profile_used_by_additional_or_retained_track()
+        {
+            var profile = new QualityProfile { Id = 3, Name = "Additional version" };
+
+            Mocker.GetMock<ISeriesService>()
+                .Setup(s => s.GetAllSeries())
+                .Returns(new List<Series>());
+            Mocker.GetMock<ISeriesQualityTrackService>()
+                .Setup(s => s.IsProfileInUse(profile.Id))
+                .Returns(true);
+            Mocker.GetMock<IQualityProfileRepository>()
+                .Setup(s => s.Get(profile.Id))
+                .Returns(profile);
+
+            Assert.Throws<QualityProfileInUseException>(() => Subject.Delete(profile.Id));
+
+            Mocker.GetMock<IQualityProfileRepository>()
+                .Verify(s => s.Delete(It.IsAny<int>()), Times.Never());
+            Mocker.GetMock<IQualityProfileRankService>()
+                .Verify(s => s.DeleteRanksForProfile(It.IsAny<int>()), Times.Never());
+        }
+
+        [Test]
         public void should_delete_profile_if_not_assigned_to_series()
         {
             var seriesList = Builder<Series>.CreateListOfSize(3)

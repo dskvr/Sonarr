@@ -22,6 +22,7 @@ public abstract class EpisodeControllerWithSignalR : RestControllerWithSignalR<E
     protected readonly ISeriesService _seriesService;
     protected readonly IUpgradableSpecification _upgradableSpecification;
     protected readonly ICustomFormatCalculationService _formatCalculator;
+    private readonly IBroadcastSignalRMessage _signalRBroadcaster;
 
     protected EpisodeControllerWithSignalR(IEpisodeService episodeService,
                                        ISeriesService seriesService,
@@ -34,6 +35,7 @@ public abstract class EpisodeControllerWithSignalR : RestControllerWithSignalR<E
         _seriesService = seriesService;
         _upgradableSpecification = upgradableSpecification;
         _formatCalculator = formatCalculator;
+        _signalRBroadcaster = signalRBroadcaster;
     }
 
     protected EpisodeControllerWithSignalR(IEpisodeService episodeService,
@@ -48,6 +50,7 @@ public abstract class EpisodeControllerWithSignalR : RestControllerWithSignalR<E
         _seriesService = seriesService;
         _upgradableSpecification = upgradableSpecification;
         _formatCalculator = formatCalculator;
+        _signalRBroadcaster = signalRBroadcaster;
     }
 
     protected override EpisodeResource GetResourceById(int id)
@@ -60,11 +63,11 @@ public abstract class EpisodeControllerWithSignalR : RestControllerWithSignalR<E
     protected EpisodeResource MapToResource(Episode episode, bool includeSeries, bool includeEpisodeFile, bool includeImages)
     {
         var resource = episode.ToResource();
+        var series = episode.Series ?? _seriesService.GetSeries(episode.SeriesId);
+        resource.MapQualityTracks(episode, series, includeEpisodeFile, _upgradableSpecification, _formatCalculator);
 
         if (includeSeries || includeEpisodeFile || includeImages)
         {
-            var series = episode.Series ?? _seriesService.GetSeries(episode.SeriesId);
-
             if (includeSeries)
             {
                 resource.Series = series.ToResource();
@@ -88,7 +91,7 @@ public abstract class EpisodeControllerWithSignalR : RestControllerWithSignalR<E
     {
         var result = episodes.ToResource();
 
-        if (includeSeries || includeEpisodeFile || includeImages)
+        if (episodes.Count != 0)
         {
             var seriesDict = new Dictionary<int, NzbDrone.Core.Tv.Series>();
             for (var i = 0; i < episodes.Count; i++)
@@ -98,6 +101,7 @@ public abstract class EpisodeControllerWithSignalR : RestControllerWithSignalR<E
 
                 var series = episode.Series ?? seriesDict.GetValueOrDefault(episodes[i].SeriesId) ?? _seriesService.GetSeries(episodes[i].SeriesId);
                 seriesDict[series.Id] = series;
+                resource.MapQualityTracks(episode, series, includeEpisodeFile, _upgradableSpecification, _formatCalculator);
 
                 if (includeSeries)
                 {
@@ -122,9 +126,14 @@ public abstract class EpisodeControllerWithSignalR : RestControllerWithSignalR<E
     [NonAction]
     public void Handle(EpisodeGrabbedEvent message)
     {
+        if (!_signalRBroadcaster.IsConnected)
+        {
+            return;
+        }
+
         foreach (var episode in message.Episode.Episodes)
         {
-            var resource = episode.ToResource();
+            var resource = GetResourceById(episode.Id);
             resource.Grabbed = true;
 
             BroadcastResourceChange(ModelAction.Updated, resource);

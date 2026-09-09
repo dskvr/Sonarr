@@ -14,6 +14,7 @@ namespace Sonarr.Api.V5.Queue
     {
         public int? SeriesId { get; set; }
         public IEnumerable<int> EpisodeIds { get; set; } = [];
+        public List<int> TargetQualityTrackIds { get; set; } = [];
         public List<int> SeasonNumbers { get; set; } = [];
         public SeriesResource? Series { get; set; }
         public List<EpisodeResource>? Episodes { get; set; }
@@ -54,6 +55,7 @@ namespace Sonarr.Api.V5.Queue
                 Id = model.Id,
                 SeriesId = model.Series?.Id,
                 EpisodeIds = model.Episodes?.Select(e => e.Id).ToList() ?? [],
+                TargetQualityTrackIds = model.RemoteEpisode?.TargetQualityTrackIds ?? [],
                 SeasonNumbers = model.SeasonNumber.HasValue ? [model.SeasonNumber.Value] : [],
                 Series = includeSeries && model.Series != null ? model.Series.ToResource() : null,
                 Episodes = includeEpisodes ? model.Episodes?.ToResource() : null,

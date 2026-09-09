@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using NLog;
 using NzbDrone.Common.Disk;
+using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Extras.Files;
@@ -26,8 +27,9 @@ namespace NzbDrone.Core.Extras.Others
                                  IDiskTransferService diskTransferService,
                                  IOtherExtraFileService otherExtraFileService,
                                  IMediaFileAttributeService mediaFileAttributeService,
+                                 IAppFolderInfo appFolderInfo,
                                  Logger logger)
-            : base(configService, diskProvider, diskTransferService, logger)
+            : base(configService, diskProvider, diskTransferService, otherExtraFileService, appFolderInfo, logger)
         {
             _diskProvider = diskProvider;
             _otherExtraFileService = otherExtraFileService;
@@ -62,9 +64,12 @@ namespace NzbDrone.Core.Extras.Others
             return Enumerable.Empty<ExtraFile>();
         }
 
-        public override IEnumerable<ExtraFile> MoveFilesAfterRename(Series series, List<EpisodeFile> episodeFiles)
+        public override IEnumerable<ExtraFile> MoveFilesAfterRename(Series series, List<EpisodeFile> episodeFiles, bool requireSuccess = false)
         {
-            var extraFiles = _otherExtraFileService.GetFilesBySeries(series.Id);
+            var extraFiles = episodeFiles.Count == 1
+                ? _otherExtraFileService.GetFilesByEpisodeFile(episodeFiles[0].Id)
+                : _otherExtraFileService.GetFilesBySeries(series.Id);
+            var failures = requireSuccess ? new List<Exception>() : null;
             var movedFiles = new List<OtherExtraFile>();
 
             foreach (var episodeFile in episodeFiles)
@@ -73,11 +78,19 @@ namespace NzbDrone.Core.Extras.Others
 
                 foreach (var extraFile in extraFilesForEpisodeFile)
                 {
-                    movedFiles.AddIfNotNull(MoveFile(series, episodeFile, extraFile));
+                    movedFiles.AddIfNotNull(MoveFile(series, episodeFile, extraFile, failures: failures));
                 }
             }
 
-            _otherExtraFileService.Upsert(movedFiles);
+            if (!requireSuccess)
+            {
+                _otherExtraFileService.Upsert(movedFiles);
+            }
+
+            if (failures?.Count > 0)
+            {
+                throw new AggregateException("Extra files could not be moved after rename.", failures);
+            }
 
             return movedFiles;
         }

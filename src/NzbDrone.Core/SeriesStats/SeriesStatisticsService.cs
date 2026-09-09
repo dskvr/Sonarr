@@ -1,5 +1,9 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.DecisionEngine.Specifications;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Tv;
@@ -17,14 +21,32 @@ namespace NzbDrone.Core.SeriesStats
         private readonly ISeriesStatisticsRepository _seriesStatisticsRepository;
         private readonly ISeriesService _seriesService;
         private readonly IQualityProfileService _qualityProfileService;
+        private readonly ISeriesQualityTrackService _qualityTrackService;
+        private readonly IEpisodeTrackFileService _trackFileService;
+        private readonly IEpisodeService _episodeService;
+        private readonly IMediaFileService _mediaFileService;
+        private readonly ICustomFormatCalculationService _formatCalculator;
+        private readonly IUpgradableSpecification _upgradableSpecification;
 
         public SeriesStatisticsService(ISeriesStatisticsRepository seriesStatisticsRepository,
                                        ISeriesService seriesService,
-                                       IQualityProfileService qualityProfileService)
+                                       IQualityProfileService qualityProfileService,
+                                       ISeriesQualityTrackService qualityTrackService,
+                                       IEpisodeTrackFileService trackFileService,
+                                       IEpisodeService episodeService,
+                                       IMediaFileService mediaFileService,
+                                       ICustomFormatCalculationService formatCalculator,
+                                       IUpgradableSpecification upgradableSpecification)
         {
             _seriesStatisticsRepository = seriesStatisticsRepository;
             _seriesService = seriesService;
             _qualityProfileService = qualityProfileService;
+            _qualityTrackService = qualityTrackService;
+            _trackFileService = trackFileService;
+            _episodeService = episodeService;
+            _mediaFileService = mediaFileService;
+            _formatCalculator = formatCalculator;
+            _upgradableSpecification = upgradableSpecification;
         }
 
         public List<SeriesStatistics> SeriesStatistics()
@@ -32,6 +54,7 @@ namespace NzbDrone.Core.SeriesStats
             var seasonStatistics = _seriesStatisticsRepository.SeriesStatistics();
             var seriesProfiles = _seriesService.GetAllSeriesQualityProfiles();
             var profiles = _qualityProfileService.All().ToDictionary(p => p.Id);
+            var tracks = _qualityTrackService.GetAllTracks().Where(t => t.Enabled).ToLookup(t => t.SeriesId);
 
             return seasonStatistics
                 .GroupBy(s => s.SeriesId)
@@ -39,7 +62,9 @@ namespace NzbDrone.Core.SeriesStats
                 {
                     var profileId = seriesProfiles.GetValueOrDefault(s.Key);
                     profiles.TryGetValue(profileId, out var profile);
-                    return MapSeriesStatistics(s.ToList(), profile);
+                    var statistics = MapSeriesStatistics(s.ToList(), profile);
+                    AddQualityTrackStatistics(statistics, tracks[s.Key].ToList(), profiles);
+                    return statistics;
                 })
                 .ToList();
         }
@@ -55,7 +80,86 @@ namespace NzbDrone.Core.SeriesStats
 
             var profile = _qualityProfileService.Get(qualityProfileId);
 
-            return MapSeriesStatistics(stats, profile);
+            var statistics = MapSeriesStatistics(stats, profile);
+            var tracks = _qualityTrackService.GetEnabledTracks(seriesId);
+
+            if (tracks.Count > 1)
+            {
+                AddQualityTrackStatistics(statistics, tracks, _qualityProfileService.All().ToDictionary(p => p.Id));
+            }
+
+            return statistics;
+        }
+
+        private void AddQualityTrackStatistics(SeriesStatistics statistics, List<SeriesQualityTrack> tracks, Dictionary<int, QualityProfile> profiles)
+        {
+            if (tracks.Count < 2)
+            {
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+            var episodesBySeason = _episodeService.GetEpisodeBySeries(statistics.SeriesId).ToLookup(e => e.SeasonNumber);
+            var files = _mediaFileService.GetFilesBySeries(statistics.SeriesId).ToDictionary(f => f.Id);
+            var links = _trackFileService.GetForSeries(statistics.SeriesId).ToLookup(l => l.TrackId);
+            var formats = new Dictionary<int, List<CustomFormat>>();
+
+            foreach (var track in tracks)
+            {
+                if (!profiles.TryGetValue(track.QualityProfileId, out var profile))
+                {
+                    // The profile may have been removed after its track was disabled during this read.
+                    continue;
+                }
+
+                var trackFiles = links[track.Id]
+                    .Where(l => files.ContainsKey(l.EpisodeFileId))
+                    .ToDictionary(l => l.EpisodeId, l => files[l.EpisodeFileId]);
+                var trackStatistics = new QualityTrackStatistics { TrackId = track.Id, QualityProfileId = track.QualityProfileId };
+
+                foreach (var season in statistics.SeasonStatistics)
+                {
+                    var seasonStatistics = new QualityTrackStatistics { TrackId = track.Id, QualityProfileId = track.QualityProfileId };
+
+                    foreach (var episode in episodesBySeason[season.SeasonNumber])
+                    {
+                        var hasFile = trackFiles.TryGetValue(episode.Id, out var file);
+
+                        if (hasFile || (episode.Monitored && episode.AirDateUtc <= now))
+                        {
+                            seasonStatistics.EpisodeCount++;
+                        }
+
+                        if (!hasFile)
+                        {
+                            continue;
+                        }
+
+                        seasonStatistics.EpisodeFileCount++;
+
+                        if (episode.Monitored)
+                        {
+                            if (!formats.TryGetValue(file.Id, out var customFormats))
+                            {
+                                customFormats = _formatCalculator.ParseCustomFormat(file);
+                                formats.Add(file.Id, customFormats);
+                            }
+
+                            if (_upgradableSpecification.CutoffNotMet(profile, file.Quality, customFormats))
+                            {
+                                seasonStatistics.CutoffUnmetCount++;
+                            }
+                        }
+                    }
+
+                    season.QualityTracks.Add(seasonStatistics);
+                    trackStatistics.EpisodeCount += seasonStatistics.EpisodeCount;
+                    trackStatistics.EpisodeFileCount += seasonStatistics.EpisodeFileCount;
+                    trackStatistics.CutoffUnmetCount += seasonStatistics.CutoffUnmetCount;
+                }
+
+                statistics.QualityTracks.Add(trackStatistics);
+            }
         }
 
         private SeriesStatistics MapSeriesStatistics(List<SeasonStatistics> seasonStatistics, QualityProfile profile)

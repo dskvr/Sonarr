@@ -42,6 +42,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IRootFolderService _rootFolderService;
         private readonly IUpdateMediaInfo _updateMediaInfoService;
         private readonly IEventAggregator _eventAggregator;
+        private readonly IUpgradeMediaFiles _upgradeMediaFiles;
         private readonly Logger _logger;
 
         public DiskScanService(IDiskProvider diskProvider,
@@ -54,6 +55,7 @@ namespace NzbDrone.Core.MediaFiles
                                IRootFolderService rootFolderService,
                                IUpdateMediaInfo updateMediaInfoService,
                                IEventAggregator eventAggregator,
+                               IUpgradeMediaFiles upgradeMediaFiles,
                                Logger logger)
         {
             _diskProvider = diskProvider;
@@ -66,6 +68,7 @@ namespace NzbDrone.Core.MediaFiles
             _rootFolderService = rootFolderService;
             _updateMediaInfoService = updateMediaInfoService;
             _eventAggregator = eventAggregator;
+            _upgradeMediaFiles = upgradeMediaFiles;
             _logger = logger;
         }
 
@@ -75,6 +78,16 @@ namespace NzbDrone.Core.MediaFiles
         private static readonly Regex ExcludedFilesRegex = new Regex(@"^\.(_|unmanic|DS_Store$)|^Thumbs\.db$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         public void Scan(Series series)
+        {
+            _upgradeMediaFiles.RecoverImports(series);
+            lock (MediaFileOperationLock.ForSeries(series.Id))
+            {
+                _upgradeMediaFiles.RecoverFileOperations(series);
+                ScanSeries(series);
+            }
+        }
+
+        private void ScanSeries(Series series)
         {
             var rootFolder = _rootFolderService.GetBestRootFolderPath(series.Path);
 

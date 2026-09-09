@@ -42,11 +42,17 @@ namespace NzbDrone.Core.Tv
         public string SeriesTitle { get; private set; }
 
         public LazyLoaded<EpisodeFile> EpisodeFile { get; set; }
+        public LazyLoaded<List<EpisodeTrackFile>> TrackFiles { get; set; }
 
         public Series Series { get; set; }
 
         public bool HasFile => EpisodeFileId > 0;
         public bool AbsoluteEpisodeNumberAdded { get; set; }
+
+        public Episode Clone()
+        {
+            return (Episode)MemberwiseClone();
+        }
 
         public override string ToString()
         {

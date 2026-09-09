@@ -50,13 +50,15 @@ namespace NzbDrone.Core.Tv
     {
         private readonly IEpisodeRepository _episodeRepository;
         private readonly IConfigService _configService;
+        private readonly ISeriesQualityTrackService _qualityTrackService;
         private readonly ICached<HashSet<int>> _cache;
         private readonly Logger _logger;
 
-        public EpisodeService(IEpisodeRepository episodeRepository, IConfigService configService, ICacheManager cacheManager, Logger logger)
+        public EpisodeService(IEpisodeRepository episodeRepository, IConfigService configService, ICacheManager cacheManager, ISeriesQualityTrackService qualityTrackService, Logger logger)
         {
             _episodeRepository = episodeRepository;
             _configService = configService;
+            _qualityTrackService = qualityTrackService;
             _cache = cacheManager.GetCache<HashSet<int>>(GetType());
             _logger = logger;
         }
@@ -266,7 +268,11 @@ namespace NzbDrone.Core.Tv
 
         public void Handle(EpisodeFileDeletedEvent message)
         {
-            foreach (var episode in GetEpisodesByFileId(message.EpisodeFile.Id))
+            var trackAware = message.EpisodeFile.TrackFiles != null;
+            var enabledTracks = trackAware ? _qualityTrackService.GetEnabledTracks(message.EpisodeFile.SeriesId) : new List<SeriesQualityTrack>();
+            var canUnmonitor = !trackAware || (enabledTracks.Count == 1 && message.EpisodeFile.TrackFiles.Value.Any(l => l.TrackId == enabledTracks[0].Id));
+            var affectedEpisodes = trackAware ? message.EpisodeFile.Episodes.Value : GetEpisodesByFileId(message.EpisodeFile.Id);
+            foreach (var episode in affectedEpisodes)
             {
                 _logger.Debug("Detaching episode {0} from file.", episode.Id);
 
@@ -277,7 +283,7 @@ namespace NzbDrone.Core.Tv
                                          message.Reason != DeleteMediaFileReason.MissingFromDisk;
 
                 // If episode is being unlinked because it's missing from disk store it for
-                if (message.Reason == DeleteMediaFileReason.MissingFromDisk && unmonitorEpisodes)
+                if (message.Reason == DeleteMediaFileReason.MissingFromDisk && unmonitorEpisodes && canUnmonitor)
                 {
                     lock (_cache)
                     {
@@ -287,7 +293,20 @@ namespace NzbDrone.Core.Tv
                     }
                 }
 
-                _episodeRepository.ClearFileId(episode, unmonitorForReason && unmonitorEpisodes);
+                if (trackAware)
+                {
+                    // Ownership and the scalar projection were committed together before the event.
+                    // Removing one version must not unmonitor another version's acquisition.
+                    var current = _episodeRepository.Get(episode.Id);
+                    if (unmonitorForReason && unmonitorEpisodes && canUnmonitor && !current.HasFile)
+                    {
+                        _episodeRepository.SetMonitoredFlat(current, false);
+                    }
+                }
+                else
+                {
+                    _episodeRepository.ClearFileId(episode, unmonitorForReason && unmonitorEpisodes);
+                }
             }
         }
 
@@ -295,7 +314,10 @@ namespace NzbDrone.Core.Tv
         {
             foreach (var episode in message.EpisodeFile.Episodes.Value)
             {
-                _episodeRepository.SetFileId(episode, message.EpisodeFile.Id);
+                if (message.EpisodeFile.TrackFiles == null)
+                {
+                    _episodeRepository.SetFileId(episode, message.EpisodeFile.Id);
+                }
 
                 lock (_cache)
                 {

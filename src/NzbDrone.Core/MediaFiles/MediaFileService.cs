@@ -31,12 +31,14 @@ namespace NzbDrone.Core.MediaFiles
     {
         private readonly IEventAggregator _eventAggregator;
         private readonly IMediaFileRepository _mediaFileRepository;
+        private readonly IEpisodeTrackFileService _trackFileService;
         private readonly Logger _logger;
 
-        public MediaFileService(IMediaFileRepository mediaFileRepository, IEventAggregator eventAggregator, Logger logger)
+        public MediaFileService(IMediaFileRepository mediaFileRepository, IEventAggregator eventAggregator, IEpisodeTrackFileService trackFileService, Logger logger)
         {
             _mediaFileRepository = mediaFileRepository;
             _eventAggregator = eventAggregator;
+            _trackFileService = trackFileService;
             _logger = logger;
         }
 
@@ -59,12 +61,17 @@ namespace NzbDrone.Core.MediaFiles
 
         public void Delete(EpisodeFile episodeFile, DeleteMediaFileReason reason)
         {
-            // Little hack so we have the episodes and series attached for the event consumers
-            episodeFile.Episodes.LazyLoad();
-            episodeFile.Path = Path.Combine(episodeFile.Series.Value.Path, episodeFile.RelativePath);
+            lock (MediaFileOperationLock.ForSeries(episodeFile.SeriesId))
+            {
+                // Event consumers need ownership as it was before the atomic removal.
+                episodeFile.Episodes.LazyLoad();
+                episodeFile.TrackFiles ??= _trackFileService.GetForFile(episodeFile.Id);
+                episodeFile.TrackFiles.LazyLoad();
+                episodeFile.Path = Path.Combine(episodeFile.Series.Value.Path, episodeFile.RelativePath);
 
-            _mediaFileRepository.Delete(episodeFile);
-            _eventAggregator.PublishEvent(new EpisodeFileDeletedEvent(episodeFile, reason));
+                _trackFileService.DeleteFile(episodeFile.Id);
+                _eventAggregator.PublishEvent(new EpisodeFileDeletedEvent(episodeFile, reason));
+            }
         }
 
         public List<EpisodeFile> GetFilesBySeries(int seriesId)

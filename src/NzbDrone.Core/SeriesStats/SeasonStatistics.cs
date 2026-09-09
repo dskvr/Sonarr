@@ -25,6 +25,7 @@ namespace NzbDrone.Core.SeriesStats
         public string ReleaseGroupsString { get; set; }
         public string ReleaseTypesString { get; set; }
         public string EpisodeFileQualitiesString { get; set; }
+        public List<QualityTrackStatistics> QualityTracks { get; set; } = new List<QualityTrackStatistics>();
 
         public DateTime? NextAiring
         {

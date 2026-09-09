@@ -1,9 +1,10 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NzbDrone.Common;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Extras.Files;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.Extras
@@ -12,14 +13,23 @@ namespace NzbDrone.Core.Extras
         where TExtraFile : ExtraFile, new()
     {
         private readonly IExtraFileService<TExtraFile> _extraFileService;
+        private readonly IMediaFileService _mediaFileService;
+        private readonly IEpisodeTrackFileService _trackFileService;
 
-        public ImportExistingExtraFilesBase(IExtraFileService<TExtraFile> extraFileService)
+        public ImportExistingExtraFilesBase(IExtraFileService<TExtraFile> extraFileService, IMediaFileService mediaFileService, IEpisodeTrackFileService trackFileService)
         {
             _extraFileService = extraFileService;
+            _mediaFileService = mediaFileService;
+            _trackFileService = trackFileService;
         }
 
         public abstract int Order { get; }
-        public abstract IEnumerable<ExtraFile> ProcessFiles(Series series, List<string> filesOnDisk, List<string> importedFiles, string fileNameBeforeRename);
+        public abstract IEnumerable<ExtraFile> ProcessFiles(Series series, List<string> filesOnDisk, List<string> importedFiles, string fileNameBeforeRename, int? importedEpisodeFileId = null);
+
+        protected ExistingExtraFileEpisodeMatcher GetEpisodeMatcher(Series series)
+        {
+            return new ExistingExtraFileEpisodeMatcher(_mediaFileService.GetFilesBySeries(series.Id), _trackFileService.GetForSeries(series.Id));
+        }
 
         public virtual ImportExistingExtraFileFilterResult<TExtraFile> FilterAndClean(Series series, List<string> filesOnDisk, List<string> importedFiles, bool keepExistingEntries)
         {

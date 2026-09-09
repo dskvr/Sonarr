@@ -10,8 +10,10 @@ using NzbDrone.Core.DataAugmentation.Scene;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Download.Aggregation;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.DecisionEngine
 {
@@ -28,6 +30,8 @@ namespace NzbDrone.Core.DecisionEngine
         private readonly ICustomFormatCalculationService _formatCalculator;
         private readonly IRemoteEpisodeAggregationService _aggregationService;
         private readonly ISceneMappingService _sceneMappingService;
+        private readonly ISeriesQualityTrackService _qualityTrackService;
+        private readonly IEpisodeTrackFileService _trackFileService;
         private readonly Logger _logger;
 
         public DownloadDecisionMaker(IEnumerable<IDownloadDecisionEngineSpecification> specifications,
@@ -35,6 +39,8 @@ namespace NzbDrone.Core.DecisionEngine
                                      ICustomFormatCalculationService formatService,
                                      IRemoteEpisodeAggregationService aggregationService,
                                      ISceneMappingService sceneMappingService,
+                                     ISeriesQualityTrackService qualityTrackService,
+                                     IEpisodeTrackFileService trackFileService,
                                      Logger logger)
         {
             _specifications = specifications;
@@ -42,6 +48,8 @@ namespace NzbDrone.Core.DecisionEngine
             _formatCalculator = formatService;
             _aggregationService = aggregationService;
             _sceneMappingService = sceneMappingService;
+            _qualityTrackService = qualityTrackService;
+            _trackFileService = trackFileService;
             _logger = logger;
         }
 
@@ -67,6 +75,7 @@ namespace NzbDrone.Core.DecisionEngine
             }
 
             var reportNumber = 1;
+            var trackCache = new Dictionary<int, (List<SeriesQualityTrack> Tracks, List<EpisodeTrackFile> Links, Dictionary<int, string> Signatures)>();
 
             foreach (var report in reports)
             {
@@ -121,7 +130,7 @@ namespace NzbDrone.Core.DecisionEngine
                             _logger.Trace("Custom Format Score of '{0}' [{1}] calculated for '{2}'", remoteEpisode.CustomFormatScore, remoteEpisode.CustomFormats?.ConcatToString(), report.Title);
 
                             remoteEpisode.DownloadAllowed = remoteEpisode.Episodes.Any();
-                            decision = GetDecisionForReport(remoteEpisode, new ReleaseDecisionInformation(pushedRelease, searchCriteria));
+                            decision = GetTrackDecisions(remoteEpisode, new ReleaseDecisionInformation(pushedRelease, searchCriteria), trackCache);
                         }
                     }
 
@@ -175,6 +184,48 @@ namespace NzbDrone.Core.DecisionEngine
                     yield return decision;
                 }
             }
+        }
+
+        private DownloadDecision GetTrackDecisions(RemoteEpisode remoteEpisode, ReleaseDecisionInformation information, Dictionary<int, (List<SeriesQualityTrack> Tracks, List<EpisodeTrackFile> Links, Dictionary<int, string> Signatures)> cache)
+        {
+            if (!cache.TryGetValue(remoteEpisode.Series.Id, out var state))
+            {
+                var enabledTracks = _qualityTrackService.GetEnabledTracks(remoteEpisode.Series.Id);
+                state = (
+                    enabledTracks,
+                    _trackFileService.GetForSeries(remoteEpisode.Series.Id),
+                    enabledTracks?.ToDictionary(t => t.Id, t => QualityTrackSnapshot.ProfileSignature(t.QualityProfile.Value)));
+                cache.Add(remoteEpisode.Series.Id, state);
+            }
+
+            var tracks = state.Tracks;
+            var requested = remoteEpisode.Release.TargetQualityTrackIds;
+
+            if (tracks == null || tracks.Count == 0)
+            {
+                return GetDecisionForReport(remoteEpisode, information);
+            }
+
+            if (requested != null)
+            {
+                tracks = tracks.Where(t => requested.Contains(t.Id)).ToList();
+            }
+
+            if (tracks.Count == 0)
+            {
+                remoteEpisode.TargetQualityTrackIds = [];
+                remoteEpisode.DownloadAllowed = false;
+                return new DownloadDecision(remoteEpisode, new DownloadRejection(DownloadRejectionReason.Unknown, "Selected quality profiles are no longer enabled"));
+            }
+
+            var decisions = tracks.Select(track => GetDecisionForReport(QualityTrackSnapshot.Create(remoteEpisode, track, state.Links, state.Signatures[track.Id]), information)).ToList();
+            var accepted = decisions.Where(d => d.Approved).ToList();
+            var eligible = accepted.Any() ? accepted : decisions.Where(d => d.TemporarilyRejected).ToList();
+            remoteEpisode.TargetQualityTrackIds = eligible.SelectMany(d => d.RemoteEpisode.TargetQualityTrackIds).Distinct().ToList();
+            remoteEpisode.TargetQualityTrackSignatures = eligible.SelectMany(d => d.RemoteEpisode.TargetQualityTrackSignatures).ToDictionary(p => p.Key, p => p.Value);
+            var rejections = accepted.Any() ? [] : (eligible.Any() ? eligible : decisions).SelectMany(d => d.Rejections).ToArray();
+
+            return new DownloadDecision(remoteEpisode, rejections) { QualityTrackDecisions = decisions };
         }
 
         private DownloadDecision GetDecisionForReport(RemoteEpisode remoteEpisode, ReleaseDecisionInformation information)

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Parser.Model;
 
@@ -27,5 +28,7 @@ namespace NzbDrone.Core.Download.Pending
     {
         public SeriesMatchType SeriesMatchType { get; set; }
         public ReleaseSourceType ReleaseSource { get; set; }
+        public List<int> TargetQualityTrackIds { get; set; }
+        public Dictionary<int, string> TargetQualityTrackSignatures { get; set; }
     }
 }

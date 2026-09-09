@@ -6,6 +6,7 @@ import React, {
 } from 'react';
 import useApiQuery from 'Helpers/Hooks/useApiQuery';
 import Queue from 'typings/Queue';
+import getSeriesQueueDetails from './getSeriesQueueDetails';
 
 interface EpisodeDetails {
   episodeIds: number[];
@@ -31,7 +32,7 @@ export default function QueueDetailsProvider({
 }: PropsWithChildren<QueueDetailsFilter>) {
   const { data } = useApiQuery<Queue[]>({
     path: '/queue/details',
-    queryParams: { ...filter },
+    queryParams: { ...filter, includeSubresources: ['episodes'] },
     queryOptions: {
       enabled: Object.keys(filter).length > 0,
     },
@@ -69,6 +70,7 @@ export function useIsDownloadingEpisodes(episodeIds: number[]) {
 export interface SeriesQueueDetails {
   count: number;
   episodesWithFiles: number;
+  queuedVersionsCount: number;
 }
 
 export function useQueueDetailsForSeries(
@@ -77,38 +79,10 @@ export function useQueueDetailsForSeries(
 ) {
   const queue = useContext(QueueDetailsContext);
 
-  return useMemo<SeriesQueueDetails>(() => {
-    if (!queue) {
-      return { count: 0, episodesWithFiles: 0 };
-    }
-
-    return queue.reduce<SeriesQueueDetails>(
-      (acc: SeriesQueueDetails, item) => {
-        if (
-          item.trackedDownloadState === 'imported' ||
-          item.seriesId !== seriesId
-        ) {
-          return acc;
-        }
-
-        if (
-          seasonNumber != null &&
-          !item.seasonNumbers?.includes(seasonNumber)
-        ) {
-          return acc;
-        }
-
-        acc.count += item.episodeIds.length;
-        acc.episodesWithFiles += item.episodesWithFilesCount;
-
-        return acc;
-      },
-      {
-        count: 0,
-        episodesWithFiles: 0,
-      }
-    );
-  }, [seriesId, seasonNumber, queue]);
+  return useMemo<SeriesQueueDetails>(
+    () => getSeriesQueueDetails(queue, seriesId, seasonNumber),
+    [seriesId, seasonNumber, queue]
+  );
 }
 
 export const useQueueDetails = () => {

@@ -19,6 +19,7 @@ import { icons, kinds, tooltipPositions } from 'Helpers/Props';
 import InteractiveImportModal from 'InteractiveImport/InteractiveImportModal';
 import Language from 'Language/Language';
 import { QualityModel } from 'Quality/Quality';
+import QualityTrackNames from 'Series/QualityProfiles/QualityTrackNames';
 import SeriesTitleLink from 'Series/SeriesTitleLink';
 import { useSingleSeries } from 'Series/useSeries';
 import { CustomFormat } from 'Settings/CustomFormats/CustomFormats/useCustomFormats';
@@ -46,6 +47,7 @@ interface QueueRowProps {
   id: number;
   seriesId?: number;
   episodeIds: number[];
+  targetQualityTrackIds?: number[];
   downloadId: string;
   title: string;
   status: string;
@@ -79,6 +81,7 @@ function QueueRow(props: QueueRowProps) {
     id,
     seriesId,
     episodeIds,
+    targetQualityTrackIds,
     downloadId,
     title,
     status,
@@ -299,6 +302,12 @@ function QueueRow(props: QueueRowProps) {
           return (
             <TableRowCell key={name}>
               {quality ? <EpisodeQuality quality={quality} /> : null}
+              {series ? (
+                <QualityTrackNames
+                  series={series}
+                  trackIds={targetQualityTrackIds}
+                />
+              ) : null}
             </TableRowCell>
           );
         }

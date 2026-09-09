@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { useSelect } from 'App/Select/SelectContext';
+import Alert from 'Components/Alert';
 import FormGroup from 'Components/Form/FormGroup';
 import FormInputGroup from 'Components/Form/FormInputGroup';
 import FormLabel from 'Components/Form/FormLabel';
@@ -11,6 +12,14 @@ import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes } from 'Helpers/Props';
 import MoveSeriesModal from 'Series/MoveSeries/MoveSeriesModal';
+import AdditionalQualityProfiles from 'Series/QualityProfiles/AdditionalQualityProfiles';
+import AdditionalQualityProfilesPreview from 'Series/QualityProfiles/AdditionalQualityProfilesPreview';
+import {
+  applyAdditionalQualityProfiles,
+  getAdditionalQualityProfileIds,
+} from 'Series/QualityProfiles/qualityProfileSelection';
+import Series, { ApplyAdditionalQualityProfiles } from 'Series/Series';
+import { useMultipleSeries } from 'Series/useSeries';
 import { InputChanged } from 'typings/inputs';
 import translate from 'Utilities/String/translate';
 import styles from './EditSeriesModalContent.css';
@@ -19,6 +28,8 @@ interface SavePayload {
   monitored?: boolean;
   monitorNewItems?: string;
   qualityProfileId?: number;
+  additionalQualityProfileIds?: number[];
+  applyAdditionalQualityProfiles?: ApplyAdditionalQualityProfiles;
   seriesType?: string;
   seasonFolder?: boolean;
   rootFolderPath?: string;
@@ -84,11 +95,44 @@ function EditSeriesModalContent(props: EditSeriesModalContentProps) {
   const [qualityProfileId, setQualityProfileId] = useState<string | number>(
     NO_CHANGE
   );
+  const [additionalQualityProfileIds, setAdditionalQualityProfileIds] =
+    useState<number[]>([]);
+  const [applyProfiles, setApplyProfiles] = useState<
+    ApplyAdditionalQualityProfiles | 'noChange'
+  >('noChange');
   const [seriesType, setSeriesType] = useState(NO_CHANGE);
   const [seasonFolder, setSeasonFolder] = useState(NO_CHANGE);
   const [rootFolderPath, setRootFolderPath] = useState(NO_CHANGE);
   const [isConfirmMoveModalOpen, setIsConfirmMoveModalOpen] = useState(false);
-  const { selectedCount } = useSelect();
+  const { selectedCount, useSelectedIds } = useSelect<Series>();
+  const seriesIds = useSelectedIds();
+  const selectedSeries = useMultipleSeries(seriesIds);
+  const hasDuplicateProfile = selectedSeries.some((series) => {
+    const result = applyAdditionalQualityProfiles(
+      getAdditionalQualityProfileIds(series),
+      additionalQualityProfileIds,
+      applyProfiles
+    );
+    return result.includes(
+      typeof qualityProfileId === 'number'
+        ? qualityProfileId
+        : series.qualityProfileId
+    );
+  });
+
+  const handleAdditionalQualityProfilesChange = useCallback(
+    ({ value }: InputChanged<number | number[]>) => {
+      setAdditionalQualityProfileIds(value as number[]);
+    },
+    []
+  );
+
+  const handleApplyProfilesChange = useCallback(
+    ({ value }: InputChanged<string>) => {
+      setApplyProfiles(value as ApplyAdditionalQualityProfiles | 'noChange');
+    },
+    []
+  );
 
   const save = useCallback(
     (moveFiles: boolean) => {
@@ -108,6 +152,12 @@ function EditSeriesModalContent(props: EditSeriesModalContentProps) {
       if (qualityProfileId !== NO_CHANGE) {
         hasChanges = true;
         payload.qualityProfileId = qualityProfileId as number;
+      }
+
+      if (applyProfiles !== NO_CHANGE) {
+        hasChanges = true;
+        payload.additionalQualityProfileIds = additionalQualityProfileIds;
+        payload.applyAdditionalQualityProfiles = applyProfiles;
       }
 
       if (seriesType !== NO_CHANGE) {
@@ -136,6 +186,8 @@ function EditSeriesModalContent(props: EditSeriesModalContentProps) {
       monitored,
       monitorNewItems,
       qualityProfileId,
+      additionalQualityProfileIds,
+      applyProfiles,
       seriesType,
       seasonFolder,
       rootFolderPath,
@@ -237,6 +289,49 @@ function EditSeriesModalContent(props: EditSeriesModalContentProps) {
           />
         </FormGroup>
 
+        {hasDuplicateProfile ? (
+          <Alert kind="danger">
+            {translate('AdditionalQualityProfileMustDiffer')}
+          </Alert>
+        ) : null}
+
+        <AdditionalQualityProfiles
+          qualityProfileId={qualityProfileId}
+          value={additionalQualityProfileIds}
+          showInput={applyProfiles !== NO_CHANGE}
+          before={
+            <FormGroup>
+              <FormLabel>
+                {translate('ApplyAdditionalQualityProfiles')}
+              </FormLabel>
+
+              <FormInputGroup
+                type={inputTypes.SELECT}
+                name="applyAdditionalQualityProfiles"
+                value={applyProfiles}
+                values={[
+                  { key: NO_CHANGE, value: translate('NoChange') },
+                  { key: 'add', value: translate('Add') },
+                  { key: 'remove', value: translate('Remove') },
+                  { key: 'replace', value: translate('Replace') },
+                ]}
+                helpText={translate('ApplyAdditionalQualityProfilesHelpText')}
+                onChange={handleApplyProfilesChange}
+              />
+            </FormGroup>
+          }
+          onChange={handleAdditionalQualityProfilesChange}
+        >
+          {applyProfiles === NO_CHANGE ? null : (
+            <AdditionalQualityProfilesPreview
+              series={selectedSeries}
+              value={additionalQualityProfileIds}
+              qualityProfileId={qualityProfileId}
+              apply={applyProfiles}
+            />
+          )}
+        </AdditionalQualityProfiles>
+
         <FormGroup>
           <FormLabel>{translate('SeriesType')}</FormLabel>
 
@@ -287,7 +382,7 @@ function EditSeriesModalContent(props: EditSeriesModalContentProps) {
         <div>
           <Button onPress={onModalClose}>{translate('Cancel')}</Button>
 
-          <Button onPress={onSavePressWrapper}>
+          <Button isDisabled={hasDuplicateProfile} onPress={onSavePressWrapper}>
             {translate('ApplyChanges')}
           </Button>
         </div>

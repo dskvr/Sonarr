@@ -107,7 +107,7 @@ namespace NzbDrone.Core.Test.DataAugmentation.SceneNumbering
                   .Verify(v => v.GetSceneTvdbMappings(10), Times.Never());
 
             Mocker.GetMock<ISeriesService>()
-                  .Verify(v => v.UpdateSeries(It.IsAny<Series>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Never());
+                  .Verify(v => v.UpdateSeriesMetadata(It.IsAny<Series>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Never());
         }
 
         [Test]
@@ -118,7 +118,7 @@ namespace NzbDrone.Core.Test.DataAugmentation.SceneNumbering
             Subject.Handle(new SeriesUpdatedEvent(_series));
 
             Mocker.GetMock<ISeriesService>()
-                  .Verify(v => v.UpdateSeries(It.Is<Series>(s => s.UseSceneNumbering == true), It.IsAny<bool>(), It.IsAny<bool>()), Times.Once());
+                  .Verify(v => v.UpdateSeriesMetadata(It.Is<Series>(s => s.UseSceneNumbering == true), It.IsAny<bool>(), It.IsAny<bool>()), Times.Once());
         }
 
         [Test]
@@ -129,7 +129,7 @@ namespace NzbDrone.Core.Test.DataAugmentation.SceneNumbering
             Subject.Handle(new SeriesUpdatedEvent(_series));
 
             Mocker.GetMock<ISeriesService>()
-                  .Verify(v => v.UpdateSeries(It.IsAny<Series>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Once());
+                  .Verify(v => v.UpdateSeriesMetadata(It.IsAny<Series>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Once());
         }
 
         [Test]
@@ -142,7 +142,7 @@ namespace NzbDrone.Core.Test.DataAugmentation.SceneNumbering
             Subject.Handle(new SeriesUpdatedEvent(_series));
 
             Mocker.GetMock<ISeriesService>()
-                  .Verify(v => v.UpdateSeries(It.IsAny<Series>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Never());
+                  .Verify(v => v.UpdateSeriesMetadata(It.IsAny<Series>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Never());
 
             ExceptionVerification.ExpectedWarns(1);
         }
@@ -159,7 +159,7 @@ namespace NzbDrone.Core.Test.DataAugmentation.SceneNumbering
             Subject.Handle(new SeriesUpdatedEvent(_series));
 
             Mocker.GetMock<ISeriesService>()
-                  .Verify(v => v.UpdateSeries(It.IsAny<Series>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Never());
+                  .Verify(v => v.UpdateSeriesMetadata(It.IsAny<Series>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Never());
 
             ExceptionVerification.ExpectedWarns(1);
         }

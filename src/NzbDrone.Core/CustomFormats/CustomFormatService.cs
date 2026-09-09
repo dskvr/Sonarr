@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Common.Cache;
 using NzbDrone.Core.CustomFormats.Events;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 
 namespace NzbDrone.Core.CustomFormats
@@ -49,18 +50,22 @@ namespace NzbDrone.Core.CustomFormats
 
         public void Update(CustomFormat customFormat)
         {
+            using var operationLock = MediaFileOperationLock.AcquireAll();
             _formatRepository.Update(customFormat);
             _cache.Clear();
         }
 
         public void Update(List<CustomFormat> customFormat)
         {
+            using var operationLock = MediaFileOperationLock.AcquireAll();
             _formatRepository.UpdateMany(customFormat);
             _cache.Clear();
         }
 
         public CustomFormat Insert(CustomFormat customFormat)
         {
+            using var operationLock = MediaFileOperationLock.AcquireAll();
+
             // Add to DB then insert into profiles
             var result = _formatRepository.Insert(customFormat);
             _cache.Clear();
@@ -72,6 +77,7 @@ namespace NzbDrone.Core.CustomFormats
 
         public void Delete(int id)
         {
+            using var operationLock = MediaFileOperationLock.AcquireAll();
             var format = _formatRepository.Get(id);
 
             // Remove from profiles before removing from DB
@@ -83,6 +89,7 @@ namespace NzbDrone.Core.CustomFormats
 
         public void Delete(List<int> ids)
         {
+            using var operationLock = MediaFileOperationLock.AcquireAll();
             foreach (var id in ids)
             {
                 var format = _formatRepository.Get(id);

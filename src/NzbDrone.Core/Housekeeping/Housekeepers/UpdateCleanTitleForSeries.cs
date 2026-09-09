@@ -23,7 +23,7 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
                 if (s.CleanTitle != cleanTitle)
                 {
                     s.CleanTitle = cleanTitle;
-                    _seriesRepository.Update(s);
+                    _seriesRepository.SetFields(s, x => x.CleanTitle);
                 }
             });
         }

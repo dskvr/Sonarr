@@ -57,6 +57,49 @@ namespace NzbDrone.Core.Test.Download.TrackedDownloads
         }
 
         [Test]
+        public void should_not_treat_legacy_import_history_as_secondary_target_evidence()
+        {
+            GivenEpisodes(1);
+            _trackedDownload.RemoteEpisode.Series = new Series
+            {
+                QualityTracks = new List<SeriesQualityTrack> { new() { Id = 10, IsPrimary = true } }
+            };
+            _trackedDownload.RemoteEpisode.TargetQualityTrackIds = [20];
+            GivenHistoryForEpisode(_episodes[0], EpisodeHistoryEventType.DownloadFolderImported);
+
+            Subject.IsImported(_trackedDownload, _historyItems).Should().BeFalse();
+            _trackedDownload.RemoteEpisode.TargetQualityTrackIds = [10];
+            Subject.IsImported(_trackedDownload, _historyItems).Should().BeTrue();
+            _trackedDownload.RemoteEpisode.TargetQualityTrackIds = [];
+            Subject.IsImported(_trackedDownload, _historyItems).Should().BeFalse();
+        }
+
+        [Test]
+        public void should_not_complete_shared_download_when_only_one_target_imported()
+        {
+            GivenEpisodes(1);
+            _trackedDownload.RemoteEpisode.TargetQualityTrackIds = [10, 20];
+            GivenHistoryForEpisode(_episodes[0], EpisodeHistoryEventType.DownloadFolderImported, EpisodeHistoryEventType.Grabbed);
+            _historyItems[0].Data["qualityTrackIds"] = "[10]";
+            _historyItems[1].Data["qualityTrackIds"] = "[10,20]";
+
+            Subject.IsImported(_trackedDownload, _historyItems).Should().BeFalse();
+        }
+
+        [Test]
+        public void should_combine_separate_target_imports_in_history()
+        {
+            GivenEpisodes(1);
+            _trackedDownload.RemoteEpisode.TargetQualityTrackIds = [10, 20];
+            GivenHistoryForEpisode(_episodes[0], EpisodeHistoryEventType.DownloadFolderImported, EpisodeHistoryEventType.DownloadFolderImported, EpisodeHistoryEventType.Grabbed);
+            _historyItems[0].Data["qualityTrackIds"] = "[20]";
+            _historyItems[1].Data["qualityTrackIds"] = "[10]";
+            _historyItems[2].Data["qualityTrackIds"] = "[10,20]";
+
+            Subject.IsImported(_trackedDownload, _historyItems).Should().BeTrue();
+        }
+
+        [Test]
         public void should_return_false_if_there_is_no_history()
         {
             GivenEpisodes(1);

@@ -38,6 +38,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             var queue = _queueService.GetQueue();
             var matchingEpisode = queue.Where(q => q.RemoteEpisode?.Series != null &&
                                                    q.RemoteEpisode.Series.Id == subject.Series.Id &&
+                                                   QualityTrackSnapshot.TargetsOverlap(q.RemoteEpisode, subject) &&
                                                    q.RemoteEpisode.Episodes.Select(e => e.Id).Intersect(subject.Episodes.Select(e => e.Id)).Any())
                                        .ToList();
 

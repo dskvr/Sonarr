@@ -3,7 +3,9 @@ using System.Linq;
 using FizzWare.NBuilder;
 using FluentAssertions;
 using NUnit.Framework;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download.History;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Test.Framework;
 using NzbDrone.Core.Tv;
 
@@ -25,6 +27,26 @@ namespace NzbDrone.Core.Test.Download.DownloadHistoryTests
             _series2 = Builder<Series>.CreateNew()
                                       .With(s => s.Id = 8)
                                       .Build();
+        }
+
+        [Test]
+        public void should_persist_quality_track_ids_and_release_identity()
+        {
+            var history = new DownloadHistory
+            {
+                SeriesId = 7,
+                DownloadId = "track-targets",
+                SourceTitle = "Test.Release",
+                Release = new ReleaseInfo { Guid = "release-guid", Title = "Test.Release", TargetQualityTrackIds = [10, 20] },
+                Data = new Dictionary<string, string> { ["qualityTrackIds"] = "[10,20]" }
+            };
+            Subject.Insert(history);
+
+            var reloaded = Subject.FindByDownloadId("track-targets").Single();
+
+            QualityTrackSnapshot.ReadTargets(reloaded.Data).Should().Equal(10, 20);
+            reloaded.Release.Guid.Should().Be("release-guid");
+            reloaded.Release.TargetQualityTrackIds.Should().Equal(10, 20);
         }
 
         [Test]

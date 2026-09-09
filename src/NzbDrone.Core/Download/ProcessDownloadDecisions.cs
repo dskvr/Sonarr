@@ -8,6 +8,7 @@ using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Download
 {
@@ -37,6 +38,7 @@ namespace NzbDrone.Core.Download
 
         public async Task<ProcessedDecisions> ProcessDecisions(List<DownloadDecision> decisions)
         {
+            decisions = decisions.SelectMany(d => d.QualityTrackDecisions.Count == 0 ? [d] : d.QualityTrackDecisions).ToList();
             var qualifiedReports = GetQualifiedReports(decisions);
             var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(qualifiedReports);
             var grabbed = new List<DownloadDecision>();
@@ -48,8 +50,9 @@ namespace NzbDrone.Core.Download
             var usenetFailed = false;
             var torrentFailed = false;
 
-            foreach (var report in prioritizedDecisions)
+            foreach (var candidate in prioritizedDecisions)
             {
+                var report = CombineMatchingTargets(candidate, prioritizedDecisions, grabbed);
                 var downloadProtocol = report.RemoteEpisode.Release.DownloadProtocol;
 
                 // Skip if already grabbed
@@ -168,11 +171,49 @@ namespace NzbDrone.Core.Download
         {
             var episodeIds = report.RemoteEpisode.Episodes.Select(e => e.Id).ToList();
 
-            return decisions.SelectMany(r => r.RemoteEpisode.Episodes)
-                            .Select(e => e.Id)
-                            .ToList()
-                            .Intersect(episodeIds)
-                            .Any();
+            return decisions.Any(r => QualityTrackSnapshot.TargetsOverlap(r.RemoteEpisode, report.RemoteEpisode) &&
+                                      r.RemoteEpisode.Episodes.Any(e => episodeIds.Contains(e.Id)));
+        }
+
+        private DownloadDecision CombineMatchingTargets(DownloadDecision report, List<DownloadDecision> prioritized, List<DownloadDecision> grabbed)
+        {
+            if (!report.Approved || report.RemoteEpisode.TargetQualityTrackIds == null)
+            {
+                return report;
+            }
+
+            var candidates = prioritized.Where(d => d.Approved && !IsEpisodeProcessed(grabbed, d)).ToList();
+            var matches = candidates.Where(d => SameRelease(d.RemoteEpisode, report.RemoteEpisode) &&
+                ReferenceEquals(
+                    candidates.First(c => QualityTrackSnapshot.TargetsOverlap(c.RemoteEpisode, d.RemoteEpisode) &&
+                        c.RemoteEpisode.Episodes.Any(e => d.RemoteEpisode.Episodes.Any(other => other.Id == e.Id))),
+                    d)).ToList();
+
+            if (matches.Count < 2)
+            {
+                return report;
+            }
+
+            var remote = report.RemoteEpisode.Clone();
+            remote.TargetQualityTrackIds = matches.SelectMany(d => d.RemoteEpisode.TargetQualityTrackIds).Distinct().ToList();
+            remote.TargetQualityTrackSignatures = matches.SelectMany(d => d.RemoteEpisode.TargetQualityTrackSignatures ?? new Dictionary<int, string>())
+                .GroupBy(p => p.Key).ToDictionary(g => g.Key, g => g.First().Value);
+            return new DownloadDecision(remote);
+        }
+
+        private static bool SameRelease(RemoteEpisode first, RemoteEpisode second)
+        {
+            if (first.Series.Id != second.Series.Id || first.Release.IndexerId != second.Release.IndexerId)
+            {
+                return false;
+            }
+
+            if (ReferenceEquals(first.Release, second.Release))
+            {
+                return true;
+            }
+
+            return !string.IsNullOrEmpty(first.Release.Guid) && first.Release.Guid == second.Release.Guid;
         }
 
         private void PreparePending(List<Tuple<DownloadDecision, PendingReleaseReason>> queue, List<DownloadDecision> grabbed, List<DownloadDecision> pending, DownloadDecision report, PendingReleaseReason reason)

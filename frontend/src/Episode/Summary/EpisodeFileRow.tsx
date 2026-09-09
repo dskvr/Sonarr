@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { ReactNode, useCallback } from 'react';
 import Icon from 'Components/Icon';
 import IconButton from 'Components/Link/IconButton';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
@@ -31,6 +31,9 @@ interface EpisodeFileRowProps
     | 'mediaInfo'
   > {
   columns: Column[];
+  ownership?: ReactNode;
+  deleteMessage?: string;
+  isDeleteDisabled?: boolean;
   onDeleteEpisodeFile(): void;
 }
 
@@ -45,6 +48,9 @@ function EpisodeFileRow(props: EpisodeFileRowProps) {
     qualityCutoffNotMet,
     mediaInfo,
     columns,
+    ownership,
+    deleteMessage,
+    isDeleteDisabled,
     onDeleteEpisodeFile,
   } = props;
 
@@ -68,7 +74,12 @@ function EpisodeFileRow(props: EpisodeFileRowProps) {
         }
 
         if (name === 'path') {
-          return <TableRowCell key={name}>{path}</TableRowCell>;
+          return (
+            <TableRowCell key={name}>
+              {path}
+              {ownership}
+            </TableRowCell>
+          );
         }
 
         if (name === 'size') {
@@ -126,6 +137,7 @@ function EpisodeFileRow(props: EpisodeFileRowProps) {
                 title={translate('DeleteEpisodeFromDisk')}
                 aria-label={translate('DeleteEpisodeFromDisk')}
                 name={icons.REMOVE}
+                isDisabled={isDeleteDisabled}
                 onPress={setRemoveEpisodeFileModalOpen}
               />
             </TableRowCell>
@@ -139,7 +151,9 @@ function EpisodeFileRow(props: EpisodeFileRowProps) {
         isOpen={isRemoveEpisodeFileModalOpen}
         kind={kinds.DANGER}
         title={translate('DeleteEpisodeFile')}
-        message={translate('DeleteEpisodeFileMessage', { path })}
+        message={
+          deleteMessage ?? translate('DeleteEpisodeFileMessage', { path })
+        }
         confirmLabel={translate('Delete')}
         onConfirm={handleRemoveEpisodeFilePress}
         onCancel={setRemoveEpisodeFileModalClosed}

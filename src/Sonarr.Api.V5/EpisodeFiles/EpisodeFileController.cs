@@ -132,11 +132,15 @@ public class EpisodeFileController : RestControllerWithSignalR<EpisodeFileResour
     public NoContent DeleteEpisodeFiles([FromBody] EpisodeFileListResource resource)
     {
         var episodeFiles = _mediaFileService.GetFiles(resource.EpisodeFileIds);
-        var series = _seriesService.GetSeries(episodeFiles.First().SeriesId);
 
-        foreach (var episodeFile in episodeFiles)
+        foreach (var files in episodeFiles.GroupBy(f => f.SeriesId))
         {
-            _mediaFileDeletionService.DeleteEpisodeFile(series, episodeFile);
+            var series = _seriesService.GetSeries(files.Key);
+
+            foreach (var episodeFile in files)
+            {
+                _mediaFileDeletionService.DeleteEpisodeFile(series, episodeFile);
+            }
         }
 
         return TypedResults.NoContent();
@@ -186,9 +190,11 @@ public class EpisodeFileController : RestControllerWithSignalR<EpisodeFileResour
 
         _mediaFileService.Update(episodeFiles);
 
-        var series = _seriesService.GetSeries(episodeFiles.First().SeriesId);
-
-        return TypedResults.Ok(episodeFiles.ConvertAll(f => f.ToResource(series, _upgradableSpecification, _formatCalculator)));
+        return TypedResults.Ok(episodeFiles.GroupBy(f => f.SeriesId).SelectMany(files =>
+        {
+            var series = _seriesService.GetSeries(files.Key);
+            return files.Select(f => f.ToResource(series, _upgradableSpecification, _formatCalculator));
+        }).ToList());
     }
 
     [NonAction]

@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.MediaFiles;
@@ -179,6 +180,20 @@ namespace NzbDrone.Core.History
                 history.Data.Add("IndexerFlags", message.Episode.Release.IndexerFlags.ToString());
                 history.Data.Add("ReleaseType", message.Episode.ParsedEpisodeInfo.ReleaseType.ToString());
 
+                var qualityTrackIds = message.NewQualityTrackIds ?? message.Episode.TargetQualityTrackIds;
+                if (qualityTrackIds != null)
+                {
+                    history.Data.Add("qualityTrackIds", STJson.ToJson(qualityTrackIds));
+                }
+
+                if (message.Episode.TargetQualityTrackSignatures != null)
+                {
+                    var signatures = message.Episode.TargetQualityTrackSignatures
+                        .Where(s => qualityTrackIds == null || qualityTrackIds.Contains(s.Key))
+                        .ToDictionary(s => s.Key, s => s.Value);
+                    history.Data.Add("qualityTrackSignatures", STJson.ToJson(signatures));
+                }
+
                 if (!message.Episode.ParsedEpisodeInfo.ReleaseHash.IsNullOrWhiteSpace())
                 {
                     history.Data.Add("ReleaseHash", message.Episode.ParsedEpisodeInfo.ReleaseHash);
@@ -232,6 +247,11 @@ namespace NzbDrone.Core.History
                 history.Data.Add("IndexerFlags", message.ImportedEpisode.IndexerFlags.ToString());
                 history.Data.Add("ReleaseType", message.ImportedEpisode.ReleaseType.ToString());
 
+                if (message.EpisodeInfo.TargetQualityTrackIds != null)
+                {
+                    history.Data.Add("qualityTrackIds", STJson.ToJson(message.EpisodeInfo.TargetQualityTrackIds));
+                }
+
                 _historyRepository.Insert(history);
             }
         }
@@ -259,6 +279,13 @@ namespace NzbDrone.Core.History
                 history.Data.Add("ReleaseGroup", message.TrackedDownload?.RemoteEpisode?.ParsedEpisodeInfo?.ReleaseGroup ?? message.Data.GetValueOrDefault(EpisodeHistory.RELEASE_GROUP));
                 history.Data.Add("Size", message.TrackedDownload?.DownloadItem.TotalSize.ToString() ?? message.Data.GetValueOrDefault(EpisodeHistory.SIZE));
                 history.Data.Add("Indexer", message.TrackedDownload?.RemoteEpisode?.Release?.Indexer ?? message.Data.GetValueOrDefault(EpisodeHistory.INDEXER));
+
+                var qualityTrackIds = message.TrackedDownload?.RemoteEpisode?.TargetQualityTrackIds;
+                var targetData = qualityTrackIds == null ? message.Data?.GetValueOrDefault("qualityTrackIds") : STJson.ToJson(qualityTrackIds);
+                if (targetData != null)
+                {
+                    history.Data.Add("qualityTrackIds", targetData);
+                }
 
                 _historyRepository.Insert(history);
             }
@@ -296,6 +323,13 @@ namespace NzbDrone.Core.History
                 history.Data.Add("IndexerFlags", message.EpisodeFile.IndexerFlags.ToString());
                 history.Data.Add("ReleaseType", message.EpisodeFile.ReleaseType.ToString());
 
+                var qualityTrackIds = message.EpisodeFile.TrackFiles?.Value?.Where(l => l.EpisodeId == episode.Id)
+                    .Select(l => l.TrackId).Distinct().ToList();
+                if (qualityTrackIds is { Count: > 0 })
+                {
+                    history.Data.Add("qualityTrackIds", STJson.ToJson(qualityTrackIds));
+                }
+
                 _historyRepository.Insert(history);
             }
         }
@@ -329,6 +363,13 @@ namespace NzbDrone.Core.History
                 history.Data.Add("IndexerFlags", message.EpisodeFile.IndexerFlags.ToString());
                 history.Data.Add("ReleaseType", message.EpisodeFile.ReleaseType.ToString());
 
+                var qualityTrackIds = message.EpisodeFile.TrackFiles?.Value?.Where(l => l.EpisodeId == episode.Id)
+                    .Select(l => l.TrackId).Distinct().ToList();
+                if (qualityTrackIds is { Count: > 0 })
+                {
+                    history.Data.Add("qualityTrackIds", STJson.ToJson(qualityTrackIds));
+                }
+
                 _historyRepository.Insert(history);
             }
         }
@@ -358,6 +399,12 @@ namespace NzbDrone.Core.History
                 history.Data.Add("Size", message.TrackedDownload?.DownloadItem.TotalSize.ToString());
                 history.Data.Add("Indexer", message.TrackedDownload?.RemoteEpisode?.Release?.Indexer);
                 history.Data.Add("ReleaseType", message.TrackedDownload?.RemoteEpisode?.ParsedEpisodeInfo?.ReleaseType.ToString());
+
+                var qualityTrackIds = message.TrackedDownload?.RemoteEpisode?.TargetQualityTrackIds;
+                if (qualityTrackIds != null)
+                {
+                    history.Data.Add("qualityTrackIds", STJson.ToJson(qualityTrackIds));
+                }
 
                 historyToAdd.Add(history);
             }

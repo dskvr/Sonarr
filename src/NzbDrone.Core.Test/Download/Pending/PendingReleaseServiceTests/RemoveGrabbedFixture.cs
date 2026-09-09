@@ -119,6 +119,19 @@ namespace NzbDrone.Core.Test.Download.Pending.PendingReleaseServiceTests
         }
 
         [Test]
+        public void should_preserve_pending_release_for_other_track()
+        {
+            GivenHeldRelease(_parsedEpisodeInfo.Quality);
+            _heldReleases[0].AdditionalInfo = new PendingReleaseAdditionalInfo { TargetQualityTrackIds = [20] };
+            _remoteEpisode.TargetQualityTrackIds = [10];
+            InitializeReleases();
+
+            Subject.Handle(new EpisodeGrabbedEvent(_remoteEpisode));
+
+            Mocker.GetMock<IPendingReleaseRepository>().Verify(r => r.Delete(It.IsAny<PendingRelease>()), Times.Never());
+        }
+
+        [Test]
         public void should_delete_if_the_grabbed_quality_is_the_same()
         {
             GivenHeldRelease(_parsedEpisodeInfo.Quality);

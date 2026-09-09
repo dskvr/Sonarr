@@ -99,7 +99,8 @@ namespace NzbDrone.Core.IndexerSearch
 
             if (missingOnly)
             {
-                episodes = episodes.Where(e => !e.HasFile).ToList();
+                var series = _seriesService.GetSeries(seriesId);
+                episodes = episodes.Where(e => QualityTrackSnapshot.IsMissing(e, series)).ToList();
             }
 
             if (episodes.Count == 0)

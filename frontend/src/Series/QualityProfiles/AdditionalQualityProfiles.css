@@ -1,0 +1,40 @@
+.disclosure {
+  margin-bottom: 20px;
+}
+
+.summary {
+  margin-left: calc($formLabelLargeWidth + $formLabelRightMarginWidth);
+  color: var(--linkColor);
+  cursor: pointer;
+}
+
+.openSummary {
+  composes: summary;
+
+  margin-bottom: 15px;
+}
+
+.preview {
+  overflow-x: auto;
+  margin-bottom: 20px;
+}
+
+.profileList {
+  margin-top: 5px;
+  margin-bottom: 10px;
+}
+
+.retained {
+  margin-bottom: 20px;
+}
+
+.file {
+  margin-bottom: 20px;
+  overflow-wrap: anywhere;
+}
+
+@media only screen and (max-width: $breakpointLarge) {
+  .summary {
+    margin-left: 0;
+  }
+}

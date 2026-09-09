@@ -19,9 +19,11 @@ export interface InteractiveImportCommandOptions {
   releaseType: ReleaseType;
   downloadId?: string;
   episodeFileId?: number;
+  targetQualityTrackIds?: number[];
 }
 
 interface InteractiveImport extends ModelBase {
+  resetQualityTrackTargets?: boolean;
   path: string;
   relativePath: string;
   folderName: string;
@@ -39,6 +41,7 @@ interface InteractiveImport extends ModelBase {
   releaseType: ReleaseType;
   rejections: Rejection[];
   episodeFileId?: number;
+  targetQualityTrackIds?: number[];
   downloadId?: string;
 }
 

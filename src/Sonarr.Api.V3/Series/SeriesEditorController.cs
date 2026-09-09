@@ -16,12 +16,14 @@ namespace Sonarr.Api.V3.Series
         private readonly ISeriesService _seriesService;
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly SeriesEditorValidator _seriesEditorValidator;
+        private readonly ISeriesQualityTrackService _qualityTrackService;
 
-        public SeriesEditorController(ISeriesService seriesService, IManageCommandQueue commandQueueManager, SeriesEditorValidator seriesEditorValidator)
+        public SeriesEditorController(ISeriesService seriesService, IManageCommandQueue commandQueueManager, SeriesEditorValidator seriesEditorValidator, ISeriesQualityTrackService qualityTrackService)
         {
             _seriesService = seriesService;
             _commandQueueManager = commandQueueManager;
             _seriesEditorValidator = seriesEditorValidator;
+            _qualityTrackService = qualityTrackService;
         }
 
         [HttpPut]
@@ -29,6 +31,11 @@ namespace Sonarr.Api.V3.Series
         {
             var seriesToUpdate = _seriesService.GetSeries(resource.SeriesIds);
             var seriesToMove = new List<BulkMoveSeries>();
+
+            foreach (var series in seriesToUpdate)
+            {
+                _qualityTrackService.ValidateProfiles(series.Id, resource.QualityProfileId ?? series.QualityProfileId, null);
+            }
 
             foreach (var series in seriesToUpdate)
             {
@@ -92,7 +99,14 @@ namespace Sonarr.Api.V3.Series
                 {
                     throw new ValidationException(validationResult.Errors);
                 }
+
+                if (resource.MoveFiles && resource.RootFolderPath.IsNotNullOrWhiteSpace())
+                {
+                    series.RootFolderPath = null;
+                }
             }
+
+            var updatedSeries = _seriesService.UpdateSeries(seriesToUpdate, !resource.MoveFiles);
 
             if (resource.MoveFiles && seriesToMove.Any())
             {
@@ -103,7 +117,7 @@ namespace Sonarr.Api.V3.Series
                 });
             }
 
-            return Accepted(_seriesService.UpdateSeries(seriesToUpdate, !resource.MoveFiles).ToResource());
+            return Accepted(updatedSeries.ToResource());
         }
 
         [HttpDelete]

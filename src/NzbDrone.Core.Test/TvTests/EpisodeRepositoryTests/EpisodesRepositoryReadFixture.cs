@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using FizzWare.NBuilder;
 using FluentAssertions;
 using NUnit.Framework;
@@ -42,6 +43,8 @@ namespace NzbDrone.Core.Test.TvTests.EpisodeRepositoryTests
                                         .BuildListOfNew();
 
             Db.InsertMany(episode);
+            var track = Db.Insert(new SeriesQualityTrack { SeriesId = _series.Id, QualityProfileId = _series.QualityProfileId, IsPrimary = true, Enabled = true });
+            Db.InsertMany(episode.Select(e => new EpisodeTrackFile { EpisodeId = e.Id, TrackId = track.Id, EpisodeFileId = episodeFile.Id }));
 
             var episodes = Subject.GetEpisodeByFileId(episodeFile.Id);
             episodes.Should().HaveCount(2);

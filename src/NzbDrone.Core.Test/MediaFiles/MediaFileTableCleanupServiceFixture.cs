@@ -36,6 +36,15 @@ namespace NzbDrone.Core.Test.MediaFiles
             Mocker.GetMock<IEpisodeService>()
                   .Setup(c => c.GetEpisodeBySeries(It.IsAny<int>()))
                   .Returns(_episodes);
+
+            Mocker.GetMock<IEpisodeTrackFileService>()
+                .Setup(s => s.GetForSeries(It.IsAny<int>()))
+                .Returns(() => _episodes.Where(e => e.EpisodeFileId > 0).Select(e => new EpisodeTrackFile
+                {
+                    EpisodeId = e.Id,
+                    TrackId = 1,
+                    EpisodeFileId = e.EpisodeFileId
+                }).ToList());
         }
 
         private void GivenEpisodeFiles(IEnumerable<EpisodeFile> episodeFiles)
@@ -85,6 +94,20 @@ namespace NzbDrone.Core.Test.MediaFiles
             Subject.Clean(_series, FilesOnDisk(episodeFiles.Where(e => e.RelativePath != DELETED_PATH)));
 
             Mocker.GetMock<IMediaFileService>().Verify(c => c.Delete(It.Is<EpisodeFile>(e => e.RelativePath == DELETED_PATH), DeleteMediaFileReason.MissingFromDisk), Times.Exactly(2));
+        }
+
+        [Test]
+        public void should_keep_secondary_file_without_scalar_reference()
+        {
+            var episodeFile = new EpisodeFile { Id = 100, RelativePath = "secondary.mkv" };
+            GivenEpisodeFiles([episodeFile]);
+            Mocker.GetMock<IEpisodeTrackFileService>()
+                .Setup(s => s.GetForSeries(_series.Id))
+                .Returns([new EpisodeTrackFile { EpisodeId = _episodes[0].Id, TrackId = 2, EpisodeFileId = 100 }]);
+
+            Subject.Clean(_series, FilesOnDisk([episodeFile]));
+
+            Mocker.GetMock<IMediaFileService>().Verify(s => s.Delete(episodeFile, It.IsAny<DeleteMediaFileReason>()), Times.Never());
         }
 
         [Test]

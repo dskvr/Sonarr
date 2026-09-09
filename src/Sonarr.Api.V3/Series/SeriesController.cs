@@ -45,6 +45,7 @@ namespace Sonarr.Api.V3.Series
         private readonly IMapCoversToLocal _coverMapper;
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly IRootFolderService _rootFolderService;
+        private readonly ISeriesQualityTrackService _qualityTrackService;
 
         public SeriesController(IBroadcastSignalRMessage signalRBroadcaster,
                             ISeriesService seriesService,
@@ -62,7 +63,8 @@ namespace Sonarr.Api.V3.Series
                             SystemFolderValidator systemFolderValidator,
                             QualityProfileExistsValidator qualityProfileExistsValidator,
                             RootFolderExistsValidator rootFolderExistsValidator,
-                            SeriesFolderAsRootFolderValidator seriesFolderAsRootFolderValidator)
+                            SeriesFolderAsRootFolderValidator seriesFolderAsRootFolderValidator,
+                            ISeriesQualityTrackService qualityTrackService)
             : base(signalRBroadcaster)
         {
             _seriesService = seriesService;
@@ -73,6 +75,7 @@ namespace Sonarr.Api.V3.Series
             _coverMapper = coverMapper;
             _commandQueueManager = commandQueueManager;
             _rootFolderService = rootFolderService;
+            _qualityTrackService = qualityTrackService;
 
             SharedValidator.RuleFor(s => s.Path).Cascade(CascadeMode.Stop)
                 .IsValidPath()
@@ -182,26 +185,31 @@ namespace Sonarr.Api.V3.Series
         public ActionResult<SeriesResource> UpdateSeries([FromBody] SeriesResource seriesResource, [FromQuery] bool moveFiles = false)
         {
             var series = _seriesService.GetSeries(seriesResource.Id);
+            _qualityTrackService.ValidateProfiles(series.Id, seriesResource.QualityProfileId, null);
+
+            var sourcePath = series.Path;
+
+            var model = seriesResource.ToModel(series);
 
             if (moveFiles)
             {
-                var sourcePath = series.Path;
-                var destinationPath = seriesResource.Path;
+                model.Path = sourcePath;
+            }
 
+            _seriesService.UpdateSeries(model);
+
+            if (moveFiles)
+            {
                 _commandQueueManager.Push(new MoveSeriesCommand
                 {
                     SeriesId = series.Id,
                     SourcePath = sourcePath,
-                    DestinationPath = destinationPath
+                    DestinationPath = seriesResource.Path
                 },
                     trigger: CommandTrigger.Manual);
             }
 
-            var model = seriesResource.ToModel(series);
-
-            _seriesService.UpdateSeries(model);
-
-            BroadcastResourceChange(ModelAction.Updated, seriesResource);
+            BroadcastResourceChange(ModelAction.Updated, series.Id);
 
             return Accepted(seriesResource.Id);
         }

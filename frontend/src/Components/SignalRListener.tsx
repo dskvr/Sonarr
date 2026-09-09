@@ -10,6 +10,7 @@ import ModelBase from 'App/ModelBase';
 import Command from 'Commands/Command';
 import { useUpdateCommand } from 'Commands/useCommands';
 import Episode from 'Episode/Episode';
+import mergeEpisodeUpdate from 'Episode/mergeEpisodeUpdate';
 import { EpisodeFile } from 'EpisodeFile/EpisodeFile';
 import { PagedQueryResponse } from 'Helpers/Hooks/usePagedApiQuery';
 import Series from 'Series/Series';
@@ -102,7 +103,13 @@ function SignalRListener() {
     if (name === 'calendar') {
       if (body.action === 'updated') {
         const updatedItem = body.resource as Episode;
-        updateQueryClientItem(queryClient, ['/calendar'], updatedItem, true);
+        updateQueryClientItem(
+          queryClient,
+          ['/calendar'],
+          updatedItem,
+          true,
+          mergeEpisodeUpdate
+        );
 
         return;
       }
@@ -146,7 +153,13 @@ function SignalRListener() {
       if (body.action === 'updated') {
         const updatedItem = body.resource as Episode;
 
-        updateQueryClientItem(queryClient, ['/episode'], updatedItem, false);
+        updateQueryClientItem(
+          queryClient,
+          ['/episode'],
+          updatedItem,
+          false,
+          mergeEpisodeUpdate
+        );
       }
 
       return;
@@ -302,7 +315,8 @@ function SignalRListener() {
       updatePagedItem<Episode>(
         queryClient,
         ['/wanted/cutoff'],
-        body.resource as Episode
+        body.resource as Episode,
+        mergeEpisodeUpdate
       );
 
       return;
@@ -316,7 +330,8 @@ function SignalRListener() {
       updatePagedItem<Episode>(
         queryClient,
         ['/wanted/missing'],
-        body.resource as Episode
+        body.resource as Episode,
+        mergeEpisodeUpdate
       );
 
       return;
@@ -370,7 +385,8 @@ export default SignalRListener;
 const updatePagedItem = <T extends ModelBase>(
   queryClient: ReturnType<typeof useQueryClient>,
   queryKey: QueryKey,
-  updatedItem: T
+  updatedItem: T,
+  merge?: (current: T, updated: T) => T
 ) => {
   queryClient.setQueriesData(
     { queryKey },
@@ -391,7 +407,7 @@ const updatePagedItem = <T extends ModelBase>(
         ...oldData,
         records: oldData.records.map((item) => {
           if (item.id === updatedItem.id) {
-            return updatedItem;
+            return merge ? merge(item, updatedItem) : updatedItem;
           }
 
           return item;
@@ -405,7 +421,8 @@ const updateQueryClientItem = <T extends ModelBase>(
   queryClient: ReturnType<typeof useQueryClient>,
   queryKey: QueryKey,
   updatedItem: T,
-  addMissing: boolean
+  addMissing: boolean,
+  merge?: (current: T, updated: T) => T
 ) => {
   queryClient.setQueriesData({ queryKey }, (oldData: T[] | undefined) => {
     if (!oldData) {
@@ -420,7 +437,7 @@ const updateQueryClientItem = <T extends ModelBase>(
 
     return oldData.map((item) => {
       if (item.id === updatedItem.id) {
-        return updatedItem;
+        return merge ? merge(item, updatedItem) : updatedItem;
       }
 
       return item;

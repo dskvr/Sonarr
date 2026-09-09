@@ -1,11 +1,12 @@
-import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo } from 'react';
+import { hashKey, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import ModelBase from 'App/ModelBase';
 import useApiMutation from 'Helpers/Hooks/useApiMutation';
 import useApiQuery from 'Helpers/Hooks/useApiQuery';
 import Language from 'Language/Language';
 import { QualityModel } from 'Quality/Quality';
 import clientSideFilterAndSort from 'Utilities/Filter/clientSideFilterAndSort';
+import { captureImportMapping, ImportMapping } from './importMapping';
 import InteractiveImport from './InteractiveImport';
 import { useInteractiveImportOptions } from './interactiveImportOptionsStore';
 import ReleaseType from './ReleaseType';
@@ -23,9 +24,15 @@ interface InteractiveImportParams {
 const useInteractiveImport = (params: InteractiveImportParams) => {
   const { sortKey, sortDirection } = useInteractiveImportOptions();
 
-  const { data, isFetching, isFetched, error, refetch } = useApiQuery<
-    InteractiveImport[]
-  >({
+  const {
+    data,
+    isFetching,
+    isFetched,
+    isPlaceholderData,
+    error,
+    refetch,
+    queryKey,
+  } = useApiQuery<InteractiveImport[]>({
     path: '/manualimport',
     queryParams: { ...params },
     queryOptions: {
@@ -37,7 +44,30 @@ const useInteractiveImport = (params: InteractiveImportParams) => {
   });
 
   const items = data ?? DEFAULT_ITEMS;
-  const originalItems = [...items];
+  const snapshotKey = hashKey(queryKey);
+  const [snapshot, setSnapshot] = useState<{
+    key: string;
+    items: ImportMapping[];
+  }>();
+
+  useEffect(() => {
+    if (!isFetched || isPlaceholderData || !data) {
+      return;
+    }
+
+    // Keep the first successful fetch as the mapping baseline. Reprocess and
+    // client-side edits replace query data, but must not replace this snapshot.
+    setSnapshot((current) =>
+      current?.key === snapshotKey
+        ? current
+        : {
+            key: snapshotKey,
+            items: data.map(captureImportMapping),
+          }
+    );
+  }, [data, isFetched, isPlaceholderData, snapshotKey]);
+
+  const originalItems = snapshot?.key === snapshotKey ? snapshot.items : [];
 
   const { data: sortedItems } = useMemo(() => {
     const sortPredicates = {
@@ -115,6 +145,8 @@ export const useUpdateInteractiveImportItems = () => {
 };
 
 interface ReprocessInteractiveImportItem extends ModelBase {
+  resetQualityTrackTargets?: boolean;
+  targetQualityTrackIds?: number[];
   path: string;
   relativePath: string;
   seriesId: number | undefined;
@@ -190,6 +222,8 @@ export const useReprocessInteractiveImportItems = () => {
             indexerFlags: item.indexerFlags,
             releaseType: item.releaseType,
             downloadId: item.downloadId,
+            targetQualityTrackIds: item.targetQualityTrackIds,
+            resetQualityTrackTargets: item.resetQualityTrackTargets,
           });
 
           return acc;

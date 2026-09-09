@@ -100,7 +100,7 @@ namespace NzbDrone.Core.Notifications.CustomScript
             AddInstanceVariables(environmentVariables, "Download");
             AddSeriesVariables(environmentVariables, series);
 
-            environmentVariables.Add("Sonarr_IsUpgrade", message.OldFiles.Any().ToString());
+            environmentVariables.Add("Sonarr_IsUpgrade", message.IsUpgrade.ToString());
             environmentVariables.Add("Sonarr_EpisodeFile_Id", episodeFile.Id.ToString());
             environmentVariables.Add("Sonarr_EpisodeFile_EpisodeCount", episodeFile.Episodes.Value.Count.ToString());
             environmentVariables.Add("Sonarr_EpisodeFile_RelativePath", episodeFile.RelativePath);

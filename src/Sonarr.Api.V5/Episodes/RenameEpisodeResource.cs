@@ -10,6 +10,7 @@ public class RenameEpisodeResource : RestResource
     public int EpisodeFileId { get; set; }
     public string? ExistingPath { get; set; }
     public string? NewPath { get; set; }
+    public string? Error { get; set; }
 }
 
 public static class RenameEpisodeResourceMapper
@@ -24,7 +25,8 @@ public static class RenameEpisodeResourceMapper
             EpisodeNumbers = model.EpisodeNumbers.ToList(),
             EpisodeFileId = model.EpisodeFileId,
             ExistingPath = model.ExistingPath,
-            NewPath = model.NewPath
+            NewPath = model.NewPath,
+            Error = model.Error
         };
     }
 

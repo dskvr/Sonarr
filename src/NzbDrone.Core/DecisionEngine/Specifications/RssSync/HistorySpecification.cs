@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
@@ -48,7 +49,12 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
             foreach (var episode in subject.Episodes)
             {
                 _logger.Debug("Checking current status of episode [{0}] in history", episode.Id);
-                var mostRecent = _historyService.MostRecentForEpisode(episode.Id);
+                var mostRecent = subject.TargetQualityTrackIds == null
+                    ? _historyService.MostRecentForEpisode(episode.Id)
+                    : _historyService.FindByEpisodeId(episode.Id)
+                        .Where(h => (QualityTrackSnapshot.ReadTargets(h.Data, "qualityTrackIds") ?? QualityTrackSnapshot.LegacyTargets(subject.Series))
+                            .Intersect(subject.TargetQualityTrackIds).Any())
+                        .MaxBy(h => h.Date);
 
                 if (mostRecent != null && mostRecent.EventType == EpisodeHistoryEventType.Grabbed)
                 {

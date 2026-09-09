@@ -10,5 +10,6 @@ namespace NzbDrone.Core.MediaFiles
         public int EpisodeFileId { get; set; }
         public string ExistingPath { get; set; }
         public string NewPath { get; set; }
+        public string Error { get; set; }
     }
 }

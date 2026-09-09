@@ -106,6 +106,9 @@ jobs:
       - name: Yarn Install
         run: yarn install --frozen-lockfile
 
+      - name: Frontend Tests
+        run: yarn test:frontend
+
       - parallel:
         - name: Lint
           run: yarn lint

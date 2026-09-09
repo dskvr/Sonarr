@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using FizzWare.NBuilder;
+using FluentAssertions;
 using Moq;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
@@ -10,6 +11,7 @@ using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Extras;
 using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Test.Framework;
 using NzbDrone.Core.Tv;
@@ -123,6 +125,38 @@ namespace NzbDrone.Core.Test.Extras
 
             Mocker.GetMock<IDiskProvider>().Setup(s => s.GetFiles(_episodeFolder, It.IsAny<bool>()))
                   .Returns(files.ToArray());
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_preserve_distinct_secondary_episode_associations_during_scan_or_rename(bool rename)
+        {
+            var episode = new Episode { Id = 1, EpisodeFileId = 10 };
+            var secondary = new EpisodeFile { Id = 20, RelativePath = "secondary.mkv" };
+            Mocker.GetMock<IEpisodeService>().Setup(s => s.GetEpisodeBySeries(_series.Id))
+                .Returns(new List<Episode> { episode });
+            Mocker.GetMock<IMediaFileService>().Setup(s => s.GetFilesBySeries(_series.Id))
+                .Returns(new List<EpisodeFile> { secondary });
+            Mocker.GetMock<IEpisodeTrackFileService>().Setup(s => s.GetForSeries(_series.Id))
+                .Returns(new List<EpisodeTrackFile>
+                {
+                    new EpisodeTrackFile { EpisodeId = 1, TrackId = 2, EpisodeFileId = 20 },
+                    new EpisodeTrackFile { EpisodeId = 1, TrackId = 3, EpisodeFileId = 20 }
+                });
+
+            if (rename)
+            {
+                Subject.Handle(new SeriesRenamedEvent(_series, new List<RenamedEpisodeFile>()));
+                _subtitleService.Verify(s => s.MoveFilesAfterRename(_series, It.Is<List<EpisodeFile>>(f => f.Single().Id == 20), false), Times.Once());
+            }
+            else
+            {
+                Subject.Handle(new SeriesScannedEvent(_series, new List<string>()));
+                _subtitleService.Verify(s => s.CreateAfterSeriesScan(_series, It.Is<List<EpisodeFile>>(f => f.Single().Id == 20)), Times.Once());
+            }
+
+            secondary.Episodes.Value.Should().ContainSingle().Which.Should().BeSameAs(episode);
+            Mocker.GetMock<IEpisodeTrackFileService>().Verify(s => s.GetForSeries(_series.Id), Times.Once());
         }
 
         [Test]

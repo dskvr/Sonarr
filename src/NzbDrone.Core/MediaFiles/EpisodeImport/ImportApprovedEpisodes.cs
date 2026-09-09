@@ -13,6 +13,7 @@ using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
+using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.MediaFiles.EpisodeImport
 {
@@ -31,6 +32,8 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
         private readonly IHistoryService _historyService;
         private readonly IEventAggregator _eventAggregator;
         private readonly IManageCommandQueue _commandQueueManager;
+        private readonly IEpisodeTrackFileService _trackFileService;
+        private readonly ISeriesQualityTrackService _qualityTrackService;
         private readonly Logger _logger;
 
         public ImportApprovedEpisodes(IUpgradeMediaFiles episodeFileUpgrader,
@@ -41,6 +44,8 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
                                       IHistoryService historyService,
                                       IEventAggregator eventAggregator,
                                       IManageCommandQueue commandQueueManager,
+                                      IEpisodeTrackFileService trackFileService,
+                                      ISeriesQualityTrackService qualityTrackService,
                                       Logger logger)
         {
             _episodeFileUpgrader = episodeFileUpgrader;
@@ -51,6 +56,8 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
             _historyService = historyService;
             _eventAggregator = eventAggregator;
             _commandQueueManager = commandQueueManager;
+            _trackFileService = trackFileService;
+            _qualityTrackService = qualityTrackService;
             _logger = logger;
         }
 
@@ -70,19 +77,44 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
                                                            .ThenByDescending(e => e.LocalEpisode.Size))
             {
                 var localEpisode = importDecision.LocalEpisode;
+                _episodeFileUpgrader.RecoverImports(localEpisode.Series);
+                using var operation = MediaFileOperationLock.Acquire(new[] { localEpisode.Series.Id });
+                _episodeFileUpgrader.RecoverFileOperations(localEpisode.Series);
                 var oldFiles = new List<DeletedEpisodeFile>();
+                var imported = false;
 
                 try
                 {
                     // check if already imported
-                    if (importResults.SelectMany(r => r.ImportDecision.LocalEpisode.Episodes)
-                                         .Select(e => e.Id)
-                                         .Intersect(localEpisode.Episodes.Select(e => e.Id))
-                                         .Any())
+                    var enabledTracks = _qualityTrackService.GetEnabledTracks(localEpisode.Series.Id);
+                    if (localEpisode.TargetQualityTrackIds == null && !newDownload)
+                    {
+                        var knownFiles = _mediaFileService.GetFilesWithRelativePath(localEpisode.Series.Id, localEpisode.Series.Path.GetRelativePath(localEpisode.Path));
+                        var knownTargets = knownFiles.SelectMany(f => _trackFileService.GetForFile(f.Id)).Select(l => l.TrackId).Distinct().ToList();
+                        if (knownTargets.Count > 0)
+                        {
+                            localEpisode.TargetQualityTrackIds = knownTargets;
+                        }
+                    }
+
+                    localEpisode.TargetQualityTrackIds ??= enabledTracks.Where(t => t.IsPrimary).Select(t => t.Id).ToList();
+                    if (localEpisode.TargetQualityTrackIds.Count == 0)
+                    {
+                        importResults.Add(new ImportResult(importDecision, "Choose an enabled quality profile for this import."));
+                        continue;
+                    }
+
+                    var importedTargets = importResults.Where(r => r.Result == ImportResultType.Imported &&
+                            r.ImportDecision.LocalEpisode.Episodes.Select(e => e.Id).Intersect(localEpisode.Episodes.Select(e => e.Id)).Any())
+                        .SelectMany(r => r.ImportDecision.LocalEpisode.TargetQualityTrackIds).ToHashSet();
+                    var remainingTargets = localEpisode.TargetQualityTrackIds.Where(id => !importedTargets.Contains(id)).ToList();
+                    if (remainingTargets.Count == 0)
                     {
                         importResults.Add(new ImportResult(importDecision, "Episode has already been imported"));
                         continue;
                     }
+
+                    localEpisode.TargetQualityTrackIds = remainingTargets;
 
                     var episodeFile = localEpisode.ToEpisodeFile();
                     episodeFile.Size = _diskProvider.GetFileSize(localEpisode.Path);
@@ -133,41 +165,68 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
                             }
                         }
 
-                        oldFiles = _episodeFileUpgrader.UpgradeEpisodeFile(episodeFile, localEpisode, copyOnly).OldFiles;
+                        var moveResult = _episodeFileUpgrader.UpgradeEpisodeFile(episodeFile, localEpisode, copyOnly);
+                        oldFiles = moveResult.OldFiles;
                     }
                     else
                     {
-                        // Delete existing files from the DB mapped to this path
                         var previousFiles = _mediaFileService.GetFilesWithRelativePath(localEpisode.Series.Id, episodeFile.RelativePath);
-
-                        foreach (var previousFile in previousFiles)
+                        if (previousFiles.Count > 1)
                         {
-                            _mediaFileService.Delete(previousFile, DeleteMediaFileReason.ManualOverride);
+                            throw new InvalidOperationException("Multiple records use this path. Resolve file ownership before importing.");
+                        }
+
+                        var links = localEpisode.Episodes.SelectMany(e => localEpisode.TargetQualityTrackIds.Select(trackId => new EpisodeTrackFile
+                        {
+                            EpisodeId = e.Id,
+                            TrackId = trackId
+                        })).ToList();
+
+                        if (previousFiles.Count == 1)
+                        {
+                            episodeFile.Id = previousFiles[0].Id;
+                            _trackFileService.UpdateFile(episodeFile, links, true);
+                        }
+                        else
+                        {
+                            _trackFileService.ImportFile(episodeFile, links);
                         }
                     }
 
-                    episodeFile = _mediaFileService.Add(episodeFile);
                     importResults.Add(new ImportResult(importDecision, episodeFile));
+                    imported = true;
 
-                    if (newDownload)
+                    try
                     {
-                        if (localEpisode.ScriptImported)
-                        {
-                            _existingExtraFiles.ImportExtraFiles(localEpisode.Series, localEpisode.PossibleExtraFiles, localEpisode.FileNameBeforeRename);
+                        _eventAggregator.PublishEvent(new EpisodeFileAddedEvent(episodeFile));
 
-                            if (localEpisode.FileNameBeforeRename != episodeFile.RelativePath)
+                        if (newDownload)
+                        {
+                            if (localEpisode.ScriptImported)
                             {
-                                _extraService.MoveFilesAfterRename(localEpisode.Series, episodeFile);
+                                _existingExtraFiles.ImportExtraFiles(localEpisode.Series, localEpisode.PossibleExtraFiles, localEpisode.FileNameBeforeRename, episodeFile.Id);
+
+                                if (localEpisode.FileNameBeforeRename != episodeFile.RelativePath)
+                                {
+                                    _extraService.MoveFilesAfterRename(localEpisode.Series, episodeFile);
+                                }
+                            }
+
+                            if (!localEpisode.ScriptImported || localEpisode.ShouldImportExtras)
+                            {
+                                _extraService.ImportEpisode(localEpisode, episodeFile, copyOnly);
                             }
                         }
-
-                        if (!localEpisode.ScriptImported || localEpisode.ShouldImportExtras)
-                        {
-                            _extraService.ImportEpisode(localEpisode, episodeFile, copyOnly);
-                        }
                     }
-
-                    _eventAggregator.PublishEvent(new EpisodeImportedEvent(localEpisode, episodeFile, oldFiles, newDownload, downloadClientItem));
+                    finally
+                    {
+                        // File ownership is committed even if post-processing fails.
+                        _eventAggregator.PublishEvent(new EpisodeImportedEvent(localEpisode, episodeFile, oldFiles, newDownload, downloadClientItem));
+                    }
+                }
+                catch (Exception e) when (imported)
+                {
+                    _logger.Warn(e, "Episode file imported, but a post-import action failed: {0}", localEpisode);
                 }
                 catch (RootFolderNotFoundException e)
                 {

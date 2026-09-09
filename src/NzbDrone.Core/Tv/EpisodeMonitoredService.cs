@@ -29,7 +29,7 @@ namespace NzbDrone.Core.Tv
             // Update the series without changing the episodes
             if (monitoringOptions == null)
             {
-                _seriesService.UpdateSeries(series, false);
+                _seriesService.UpdateSeriesMetadata(series, false);
                 return;
             }
 
@@ -87,7 +87,7 @@ namespace NzbDrone.Core.Tv
                 }
             }
 
-            _seriesService.UpdateSeries(series, false);
+            _seriesService.UpdateSeriesMetadata(series, false);
         }
 
         private void LegacySetEpisodeMonitoredStatus(Series series, MonitoringOptions monitoringOptions)
@@ -146,7 +146,7 @@ namespace NzbDrone.Core.Tv
 
             _episodeService.UpdateEpisodes(episodes);
 
-            _seriesService.UpdateSeries(series, false);
+            _seriesService.UpdateSeriesMetadata(series, false);
         }
 
         private void ToggleEpisodesMonitoredState(IEnumerable<Episode> episodes, bool monitored)

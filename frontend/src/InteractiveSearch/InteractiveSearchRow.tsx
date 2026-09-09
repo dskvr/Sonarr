@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import ProtocolLabel from 'Activity/Queue/ProtocolLabel';
 import Icon from 'Components/Icon';
+import Label from 'Components/Label';
 import Link from 'Components/Link/Link';
 import SpinnerIconButton from 'Components/Link/SpinnerIconButton';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
@@ -13,7 +14,11 @@ import EpisodeLanguages from 'Episode/EpisodeLanguages';
 import EpisodeQuality from 'Episode/EpisodeQuality';
 import IndexerFlags from 'Episode/IndexerFlags';
 import { icons, kinds, tooltipPositions } from 'Helpers/Props';
+import QualityTrackSelect from 'Series/QualityProfiles/QualityTrackSelect';
+import { useSingleSeries } from 'Series/useSeries';
+import QualityProfileName from 'Settings/Profiles/Quality/QualityProfileName';
 import { useUiSettingsValues } from 'Settings/UI/useUiSettings';
+import { InputChanged } from 'typings/inputs';
 import formatDateTime from 'Utilities/Date/formatDateTime';
 import formatAge from 'Utilities/Number/formatAge';
 import formatBytes from 'Utilities/Number/formatBytes';
@@ -92,6 +97,8 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
     episodeRequested,
     downloadAllowed,
     searchPayload,
+    targetQualityTrackIds,
+    qualityTrackDecisions,
   } = props;
 
   const { rejections = [] } = decision;
@@ -126,6 +133,25 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
   const [isConfirmGrabModalOpen, setIsConfirmGrabModalOpen] = useState(false);
   const [isOverrideModalOpen, setIsOverrideModalOpen] = useState(false);
   const { isGrabbing, isGrabbed, grabError, grabRelease } = useGrabRelease();
+  const series = useSingleSeries(mappedSeriesId);
+  const [selectedTargets, setSelectedTargets] = useState<number[] | undefined>(
+    undefined
+  );
+  const targets = useMemo(
+    () => selectedTargets ?? targetQualityTrackIds ?? [],
+    [selectedTargets, targetQualityTrackIds]
+  );
+  const grabTargets =
+    selectedTargets ??
+    (targetQualityTrackIds?.length ? targetQualityTrackIds : undefined);
+  const showTargets =
+    (series?.qualityTracks?.filter((track) => track.enabled).length ?? 0) > 1;
+  const handleTargetsChange = useCallback(
+    ({ value }: InputChanged<number | number[]>) => {
+      setSelectedTargets(value as number[]);
+    },
+    []
+  );
 
   const isBlocklisted = useMemo(() => {
     return (
@@ -138,6 +164,9 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
       grabRelease({
         guid,
         indexerId,
+        ...(grabTargets === undefined
+          ? {}
+          : { targetQualityTrackIds: grabTargets }),
       });
 
       return;
@@ -150,6 +179,7 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
     downloadAllowed,
     grabRelease,
     setIsConfirmGrabModalOpen,
+    grabTargets,
   ]);
 
   const onGrabConfirm = useCallback(() => {
@@ -159,8 +189,18 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
       guid,
       indexerId,
       searchInfo: searchPayload,
+      ...(grabTargets === undefined
+        ? {}
+        : { targetQualityTrackIds: grabTargets }),
     });
-  }, [guid, indexerId, searchPayload, grabRelease, setIsConfirmGrabModalOpen]);
+  }, [
+    guid,
+    indexerId,
+    searchPayload,
+    grabRelease,
+    setIsConfirmGrabModalOpen,
+    grabTargets,
+  ]);
 
   const onGrabCancel = useCallback(() => {
     setIsConfirmGrabModalOpen(false);
@@ -205,6 +245,36 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
             isDaily={isDaily}
           />
         </div>
+        {showTargets && series?.qualityTracks ? (
+          <div>
+            {qualityTrackDecisions?.map((item) => (
+              <Label
+                key={item.trackId}
+                kind={item.decision.approved ? 'success' : 'danger'}
+                title={item.decision.rejections
+                  .map((rejection) => rejection.message)
+                  .join('\n')}
+              >
+                <QualityProfileName qualityProfileId={item.qualityProfileId} />
+                {': '}
+                {item.decision.approved
+                  ? translate('Accepted')
+                  : translate('Rejected')}
+                {item.customFormatScore || customFormats.length
+                  ? ` · ${formatCustomFormatScore(
+                      item.customFormatScore,
+                      customFormats.length
+                    )}`
+                  : ''}
+              </Label>
+            ))}
+            <QualityTrackSelect
+              tracks={series.qualityTracks}
+              value={targets}
+              onChange={handleTargetsChange}
+            />
+          </div>
+        ) : null}
       </TableRowCell>
 
       <TableRowCell className={styles.indexer}>{indexer}</TableRowCell>
@@ -320,6 +390,7 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
           kind={getDownloadKind(isGrabbed, grabError)}
           title={getDownloadTooltip(isGrabbing, isGrabbed, grabError)}
           isSpinning={isGrabbing}
+          isDisabled={showTargets && !targets.length}
           onPress={handleGrabPress}
         />
 
@@ -370,6 +441,7 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
         isGrabbing={isGrabbing}
         grabError={grabError}
         grabRelease={grabRelease}
+        targetQualityTrackIds={grabTargets}
         onModalClose={onOverrideModalClose}
       />
     </TableRow>

@@ -20,7 +20,10 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
                                      SELECT ""EpisodeFiles"".""Id"" FROM ""EpisodeFiles""
                                      LEFT OUTER JOIN ""Episodes""
                                      ON ""EpisodeFiles"".""Id"" = ""Episodes"".""EpisodeFileId""
-                                     WHERE ""Episodes"".""Id"" IS NULL)");
+                                     WHERE ""Episodes"".""Id"" IS NULL
+                                     AND NOT EXISTS (
+                                         SELECT 1 FROM ""EpisodeTrackFiles""
+                                         WHERE ""EpisodeTrackFiles"".""EpisodeFileId"" = ""EpisodeFiles"".""Id""))");
         }
     }
 }

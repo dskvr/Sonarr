@@ -44,7 +44,7 @@ namespace NzbDrone.Core.Test.TvTests.EpisodeMonitoredServiceTests
             Subject.SetEpisodeMonitoredStatus(_series, null);
 
             Mocker.GetMock<ISeriesService>()
-                  .Verify(v => v.UpdateSeries(It.IsAny<Series>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Once());
+                  .Verify(v => v.UpdateSeriesMetadata(It.IsAny<Series>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Once());
 
             Mocker.GetMock<IEpisodeService>()
                   .Verify(v => v.SetEpisodeMonitoredBySeries(It.IsAny<int>(), It.IsAny<MonitorTypes>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never());
@@ -59,7 +59,7 @@ namespace NzbDrone.Core.Test.TvTests.EpisodeMonitoredServiceTests
                   .Verify(v => v.SetEpisodeMonitoredBySeries(It.IsAny<int>(), It.IsAny<MonitorTypes>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never());
 
             Mocker.GetMock<ISeriesService>()
-                  .Verify(v => v.UpdateSeries(It.IsAny<Series>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Never());
+                  .Verify(v => v.UpdateSeriesMetadata(It.IsAny<Series>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Never());
         }
 
         [Test]
@@ -157,13 +157,13 @@ namespace NzbDrone.Core.Test.TvTests.EpisodeMonitoredServiceTests
         private void VerifySeasonMonitored(int seasonNumber)
         {
             Mocker.GetMock<ISeriesService>()
-                  .Verify(v => v.UpdateSeries(It.Is<Series>(s => s.Seasons.Single(n => n.SeasonNumber == seasonNumber).Monitored), It.IsAny<bool>(), It.IsAny<bool>()));
+                  .Verify(v => v.UpdateSeriesMetadata(It.Is<Series>(s => s.Seasons.Single(n => n.SeasonNumber == seasonNumber).Monitored), It.IsAny<bool>(), It.IsAny<bool>()));
         }
 
         private void VerifySeasonNotMonitored(int seasonNumber)
         {
             Mocker.GetMock<ISeriesService>()
-                  .Verify(v => v.UpdateSeries(It.Is<Series>(s => !s.Seasons.Single(n => n.SeasonNumber == seasonNumber).Monitored), It.IsAny<bool>(), It.IsAny<bool>()));
+                  .Verify(v => v.UpdateSeriesMetadata(It.Is<Series>(s => !s.Seasons.Single(n => n.SeasonNumber == seasonNumber).Monitored), It.IsAny<bool>(), It.IsAny<bool>()));
         }
     }
 }

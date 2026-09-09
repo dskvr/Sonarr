@@ -1,5 +1,18 @@
 import ModelBase from 'App/ModelBase';
+import { EpisodeFile } from 'EpisodeFile/EpisodeFile';
 import Series from 'Series/Series';
+
+export interface EpisodeQualityTrack {
+  trackId: number;
+  qualityProfileId: number;
+  isPrimary: boolean;
+  enabled: boolean;
+  episodeFileId: number;
+  hasFile: boolean;
+  qualityCutoffNotMet: boolean;
+  cutoffNotMet: boolean;
+  customFormatScore: number;
+}
 
 interface Episode extends ModelBase {
   seriesId: number;
@@ -18,6 +31,8 @@ interface Episode extends ModelBase {
   overview: string;
   title: string;
   episodeFile?: object;
+  episodeFiles?: EpisodeFile[];
+  qualityTracks?: EpisodeQualityTrack[];
   hasFile: boolean;
   monitored: boolean;
   grabbed?: boolean;

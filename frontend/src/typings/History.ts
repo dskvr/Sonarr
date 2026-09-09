@@ -66,13 +66,14 @@ export interface DownloadIgnoredHistory {
   message: string;
 }
 
-export type HistoryData =
+export type HistoryData = (
   | GrabbedHistoryData
   | DownloadFailedHistory
   | DownloadFolderImportedHistory
   | EpisodeFileDeletedHistory
   | EpisodeFileRenamedHistory
-  | DownloadIgnoredHistory;
+  | DownloadIgnoredHistory
+) & { qualityTrackIds?: string };
 
 export default interface History {
   episodeId: number;

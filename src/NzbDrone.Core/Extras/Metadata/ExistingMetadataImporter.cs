@@ -6,6 +6,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.Extras.Metadata.Files;
 using NzbDrone.Core.Extras.Subtitles;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.EpisodeImport.Aggregation;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Tv;
@@ -22,8 +23,10 @@ namespace NzbDrone.Core.Extras.Metadata
         public ExistingMetadataImporter(IExtraFileService<MetadataFile> metadataFileService,
                                         IEnumerable<IMetadata> consumers,
                                         IAggregationService aggregationService,
+                                        IMediaFileService mediaFileService,
+                                        IEpisodeTrackFileService trackFileService,
                                         Logger logger)
-        : base(metadataFileService)
+        : base(metadataFileService, mediaFileService, trackFileService)
         {
             _metadataFileService = metadataFileService;
             _aggregationService = aggregationService;
@@ -33,12 +36,14 @@ namespace NzbDrone.Core.Extras.Metadata
 
         public override int Order => 0;
 
-        public override IEnumerable<ExtraFile> ProcessFiles(Series series, List<string> filesOnDisk, List<string> importedFiles, string fileNameBeforeRename)
+        public override IEnumerable<ExtraFile> ProcessFiles(Series series, List<string> filesOnDisk, List<string> importedFiles, string fileNameBeforeRename, int? importedEpisodeFileId = null)
         {
             _logger.Debug("Looking for existing metadata in {0}", series.Path);
 
             var metadataFiles = new List<MetadataFile>();
             var filterResult = FilterAndClean(series, filesOnDisk, importedFiles, fileNameBeforeRename is not null);
+
+            var matcher = GetEpisodeMatcher(series);
 
             foreach (var possibleMetadataFile in filterResult.FilesOnDisk)
             {
@@ -84,14 +89,16 @@ namespace NzbDrone.Core.Extras.Metadata
                             continue;
                         }
 
-                        if (localEpisode.Episodes.DistinctBy(e => e.EpisodeFileId).Count() > 1)
+                        var episodeFile = matcher.Find(localEpisode, importedEpisodeFileId);
+
+                        if (episodeFile == null)
                         {
                             _logger.Debug("Extra file: {0} does not match existing files.", possibleMetadataFile);
                             continue;
                         }
 
                         metadata.SeasonNumber = localEpisode.SeasonNumber;
-                        metadata.EpisodeFileId = localEpisode.Episodes.First().EpisodeFileId;
+                        metadata.EpisodeFileId = episodeFile.Id;
                     }
 
                     metadata.Extension = Path.GetExtension(possibleMetadataFile);

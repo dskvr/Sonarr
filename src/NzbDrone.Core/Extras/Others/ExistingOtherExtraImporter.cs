@@ -4,6 +4,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Extras.Files;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.EpisodeImport.Aggregation;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Tv;
@@ -18,8 +19,10 @@ namespace NzbDrone.Core.Extras.Others
 
         public ExistingOtherExtraImporter(IExtraFileService<OtherExtraFile> otherExtraFileService,
                                           IAggregationService aggregationService,
+                                          IMediaFileService mediaFileService,
+                                          IEpisodeTrackFileService trackFileService,
                                           Logger logger)
-            : base(otherExtraFileService)
+            : base(otherExtraFileService, mediaFileService, trackFileService)
         {
             _otherExtraFileService = otherExtraFileService;
             _aggregationService = aggregationService;
@@ -28,12 +31,14 @@ namespace NzbDrone.Core.Extras.Others
 
         public override int Order => 2;
 
-        public override IEnumerable<ExtraFile> ProcessFiles(Series series, List<string> filesOnDisk, List<string> importedFiles, string fileNameBeforeRename)
+        public override IEnumerable<ExtraFile> ProcessFiles(Series series, List<string> filesOnDisk, List<string> importedFiles, string fileNameBeforeRename, int? importedEpisodeFileId = null)
         {
             _logger.Debug("Looking for existing extra files in {0}", series.Path);
 
             var extraFiles = new List<OtherExtraFile>();
             var filterResult = FilterAndClean(series, filesOnDisk, importedFiles, fileNameBeforeRename is not null);
+
+            var matcher = GetEpisodeMatcher(series);
 
             foreach (var possibleExtraFile in filterResult.FilesOnDisk)
             {
@@ -68,7 +73,9 @@ namespace NzbDrone.Core.Extras.Others
                     continue;
                 }
 
-                if (localEpisode.Episodes.DistinctBy(e => e.EpisodeFileId).Count() > 1)
+                var episodeFile = matcher.Find(localEpisode, importedEpisodeFileId);
+
+                if (episodeFile == null)
                 {
                     _logger.Debug("Extra file: {0} does not match existing files.", possibleExtraFile);
                     continue;
@@ -78,7 +85,7 @@ namespace NzbDrone.Core.Extras.Others
                 {
                     SeriesId = series.Id,
                     SeasonNumber = localEpisode.SeasonNumber,
-                    EpisodeFileId = localEpisode.Episodes.First().EpisodeFileId,
+                    EpisodeFileId = episodeFile.Id,
                     RelativePath = series.Path.GetRelativePath(possibleExtraFile),
                     Extension = extension
                 };

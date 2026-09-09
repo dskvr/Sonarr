@@ -166,5 +166,27 @@ namespace NzbDrone.Core.Test.TvTests.EpisodeServiceTests
             Mocker.GetMock<IEpisodeRepository>()
                   .Verify(v => v.ClearFileId(It.IsAny<Episode>(), false), Times.Once());
         }
+
+        [TestCase(DeleteMediaFileReason.Manual)]
+        [TestCase(DeleteMediaFileReason.MissingFromDisk)]
+        public void should_not_unmonitor_missing_primary_when_retained_secondary_is_deleted(DeleteMediaFileReason reason)
+        {
+            GivenSingleEpisodeFile();
+            var episode = _episodes.Single();
+            episode.EpisodeFileId = 0;
+            _episodeFile.Episodes = _episodes;
+            _episodeFile.TrackFiles = new List<EpisodeTrackFile> { new EpisodeTrackFile { EpisodeId = episode.Id, TrackId = 2, EpisodeFileId = _episodeFile.Id } };
+            Mocker.GetMock<ISeriesQualityTrackService>().Setup(s => s.GetEnabledTracks(_series.Id))
+                .Returns(new List<SeriesQualityTrack> { new SeriesQualityTrack { Id = 1, IsPrimary = true, Enabled = true } });
+            Mocker.GetMock<IEpisodeRepository>().Setup(r => r.Get(episode.Id)).Returns(episode);
+            Mocker.GetMock<IConfigService>().SetupGet(s => s.AutoUnmonitorPreviouslyDownloadedEpisodes).Returns(true);
+
+            Subject.Handle(new EpisodeFileDeletedEvent(_episodeFile, reason));
+            Subject.HandleAsync(new SeriesScannedEvent(_series, new List<string>()));
+
+            Mocker.GetMock<IEpisodeRepository>().Verify(r => r.SetMonitoredFlat(It.IsAny<Episode>(), false), Times.Never());
+            Mocker.GetMock<IEpisodeRepository>().Verify(r => r.SetMonitored(It.IsAny<IEnumerable<int>>(), false), Times.Never());
+            Mocker.GetMock<IEpisodeRepository>().Verify(r => r.ClearFileId(It.IsAny<Episode>(), It.IsAny<bool>()), Times.Never());
+        }
     }
 }

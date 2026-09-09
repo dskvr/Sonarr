@@ -13,6 +13,7 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport.Manual
         public string FolderName { get; set; }
         public int SeriesId { get; set; }
         public List<int> EpisodeIds { get; set; } = [];
+        public List<int> TargetQualityTrackIds { get; set; }
         public int? EpisodeFileId { get; set; }
         public QualityModel Quality { get; set; } = new();
         public List<Language> Languages { get; set; } = [];
@@ -28,7 +29,10 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport.Manual
                 return false;
             }
 
-            return Path.PathEquals(other.Path);
+            return Path.PathEquals(other.Path) &&
+                   (TargetQualityTrackIds == null
+                       ? other.TargetQualityTrackIds == null
+                       : other.TargetQualityTrackIds != null && new HashSet<int>(TargetQualityTrackIds).SetEquals(other.TargetQualityTrackIds));
         }
 
         public override bool Equals(object obj)
@@ -43,7 +47,7 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport.Manual
                 return false;
             }
 
-            return Path.PathEquals(((ManualImportFile)obj).Path);
+            return Equals((ManualImportFile)obj);
         }
 
         public override int GetHashCode()

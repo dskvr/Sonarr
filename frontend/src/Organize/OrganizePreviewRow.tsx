@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect } from 'react';
 import { useSelect } from 'App/Select/SelectContext';
+import Alert from 'Components/Alert';
 import CheckInput from 'Components/Form/CheckInput';
 import Icon from 'Components/Icon';
 import { icons, kinds } from 'Helpers/Props';
@@ -12,12 +13,14 @@ interface OrganizePreviewRowProps {
   id: number;
   existingPath: string;
   newPath: string;
+  error?: string;
 }
 
 function OrganizePreviewRow({
   id,
   existingPath,
   newPath,
+  error,
 }: OrganizePreviewRowProps) {
   const { toggleSelected, useIsSelected } = useSelect<OrganizePreviewModel>();
   const isSelected = useIsSelected(id);
@@ -34,12 +37,16 @@ function OrganizePreviewRow({
   );
 
   useEffect(() => {
+    if (error) {
+      return;
+    }
+
     toggleSelected({
       id,
       isSelected: true,
       shiftKey: false,
     });
-  }, [id, toggleSelected]);
+  }, [id, error, toggleSelected]);
 
   return (
     <div className={styles.row}>
@@ -48,6 +55,7 @@ function OrganizePreviewRow({
         name={id.toString()}
         ariaLabel={translate('SelectRow')}
         value={isSelected}
+        isDisabled={!!error}
         onChange={handleSelectedChange}
       />
 
@@ -63,6 +71,7 @@ function OrganizePreviewRow({
 
           <span className={styles.path}>{newPath}</span>
         </div>
+        {error ? <Alert kind={kinds.DANGER}>{error}</Alert> : null}
       </div>
     </div>
   );

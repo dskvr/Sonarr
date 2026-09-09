@@ -23,6 +23,9 @@ import {
   tooltipPositions,
 } from 'Helpers/Props';
 import MoveSeriesModal from 'Series/MoveSeries/MoveSeriesModal';
+import AdditionalQualityProfiles from 'Series/QualityProfiles/AdditionalQualityProfiles';
+import { getAdditionalQualityProfileIds } from 'Series/QualityProfiles/qualityProfileSelection';
+import RetainedVersions from 'Series/QualityProfiles/RetainedVersions';
 import Series from 'Series/Series';
 import { useSaveSeries, useSingleSeries } from 'Series/useSeries';
 import { InputChanged } from 'typings/inputs';
@@ -57,6 +60,11 @@ function EditSeriesModalContent({
     rootFolderPath: initialRootFolderPath,
   } = series;
 
+  const additionalQualityProfileIds = useMemo(
+    () => getAdditionalQualityProfileIds(series),
+    [series]
+  );
+
   const { pendingChanges, setPendingChange } = usePendingChangesStore<Series>(
     {}
   );
@@ -78,6 +86,7 @@ function EditSeriesModalContent({
         monitorNewItems,
         seasonFolder,
         qualityProfileId,
+        additionalQualityProfileIds,
         seriesType,
         path,
         tags,
@@ -90,6 +99,7 @@ function EditSeriesModalContent({
     monitorNewItems,
     seasonFolder,
     qualityProfileId,
+    additionalQualityProfileIds,
     seriesType,
     path,
     tags,
@@ -138,6 +148,7 @@ function EditSeriesModalContent({
       saveSeries({
         ...series,
         ...pendingChanges,
+        additionalQualityProfileIds: pendingChanges.additionalQualityProfileIds,
       });
     }
   }, [
@@ -154,6 +165,7 @@ function EditSeriesModalContent({
     saveSeries({
       ...series,
       ...pendingChanges,
+      additionalQualityProfileIds: pendingChanges.additionalQualityProfileIds,
     });
   }, [series, pendingChanges, saveSeries]);
 
@@ -223,6 +235,16 @@ function EditSeriesModalContent({
               onChange={handleInputChange}
             />
           </FormGroup>
+
+          <AdditionalQualityProfiles
+            qualityProfileId={settings.qualityProfileId.value}
+            {...settings.additionalQualityProfileIds}
+            size="medium"
+            isInitiallyOpen={additionalQualityProfileIds.length > 0}
+            onChange={handleInputChange}
+          />
+
+          <RetainedVersions series={series} />
 
           <FormGroup size={sizes.MEDIUM}>
             <FormLabel>{translate('SeriesType')}</FormLabel>

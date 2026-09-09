@@ -4,9 +4,13 @@ using System.IO;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Disk;
+using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Extras.Files;
+using NzbDrone.Core.Extras.Metadata.Files;
+using NzbDrone.Core.Extras.Others;
+using NzbDrone.Core.Extras.Subtitles;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
@@ -18,8 +22,9 @@ namespace NzbDrone.Core.Extras
 {
     public interface IExtraService
     {
-        void MoveFilesAfterRename(Series series, EpisodeFile episodeFile);
+        void MoveFilesAfterRename(Series series, EpisodeFile episodeFile, bool requireSuccess = false);
         void ImportEpisode(LocalEpisode localEpisode, EpisodeFile episodeFile, bool isReadOnly);
+        void EnsureRenamesCompleted(Series series);
     }
 
     public class ExtraService : IExtraService,
@@ -31,24 +36,52 @@ namespace NzbDrone.Core.Extras
     {
         private readonly IMediaFileService _mediaFileService;
         private readonly IEpisodeService _episodeService;
+        private readonly IEpisodeTrackFileService _trackFileService;
         private readonly IDiskProvider _diskProvider;
+        private readonly IAppFolderInfo _appFolderInfo;
         private readonly IConfigService _configService;
         private readonly List<IManageExtraFiles> _extraFileManagers;
         private readonly Dictionary<int, Series> _seriesWithImportedFiles;
 
         public ExtraService(IMediaFileService mediaFileService,
                             IEpisodeService episodeService,
+                            IEpisodeTrackFileService trackFileService,
                             IDiskProvider diskProvider,
+                            IAppFolderInfo appFolderInfo,
                             IConfigService configService,
                             IEnumerable<IManageExtraFiles> extraFileManagers,
                             Logger logger)
         {
             _mediaFileService = mediaFileService;
             _episodeService = episodeService;
+            _trackFileService = trackFileService;
             _diskProvider = diskProvider;
+            _appFolderInfo = appFolderInfo;
             _configService = configService;
             _extraFileManagers = extraFileManagers.OrderBy(e => e.Order).ToList();
             _seriesWithImportedFiles = new Dictionary<int, Series>();
+        }
+
+        public void EnsureRenamesCompleted(Series series)
+        {
+            var root = MediaFileRecoveryPaths.GetJournalRoot(_appFolderInfo, _diskProvider);
+            var directory = MediaFileRecoveryPaths.ValidateContainedPath(_diskProvider, root, Path.Combine(root, "extras"));
+            if (!_diskProvider.FolderExists(directory))
+            {
+                return;
+            }
+
+            var prefixes = new[] { nameof(SubtitleFile), nameof(OtherExtraFile), nameof(MetadataFile) }
+                .Select(type => $"{type}-{series.Id}-").ToList();
+            foreach (var receipt in _diskProvider.GetFiles(directory, false))
+            {
+                var filename = Path.GetFileName(receipt);
+                if (filename.EndsWith(".json", StringComparison.Ordinal) && prefixes.Any(prefix => filename.StartsWith(prefix, StringComparison.Ordinal)))
+                {
+                    MediaFileRecoveryPaths.ValidateContainedPath(_diskProvider, directory, receipt);
+                    throw new IOException("Finish pending sidecar renames before moving this series. Its files and recovery receipt are preserved.");
+                }
+            }
         }
 
         public void ImportEpisode(LocalEpisode localEpisode, EpisodeFile episodeFile, bool isReadOnly)
@@ -149,13 +182,26 @@ namespace NzbDrone.Core.Extras
             }
         }
 
-        public void MoveFilesAfterRename(Series series, EpisodeFile episodeFile)
+        public void MoveFilesAfterRename(Series series, EpisodeFile episodeFile, bool requireSuccess = false)
         {
             var episodeFiles = new List<EpisodeFile> { episodeFile };
 
+            var failures = new List<Exception>();
             foreach (var extraFileManager in _extraFileManagers)
             {
-                extraFileManager.MoveFilesAfterRename(series, episodeFiles);
+                try
+                {
+                    extraFileManager.MoveFilesAfterRename(series, episodeFiles, requireSuccess).ToList();
+                }
+                catch (Exception ex) when (requireSuccess)
+                {
+                    failures.Add(ex);
+                }
+            }
+
+            if (failures.Count > 0)
+            {
+                throw new AggregateException("Extra files could not be moved after rename.", failures);
             }
         }
 
@@ -193,12 +239,13 @@ namespace NzbDrone.Core.Extras
         private List<EpisodeFile> GetEpisodeFiles(int seriesId)
         {
             var episodeFiles = _mediaFileService.GetFilesBySeries(seriesId);
-            var episodes = _episodeService.GetEpisodeBySeries(seriesId);
+            var episodes = _episodeService.GetEpisodeBySeries(seriesId).ToDictionary(e => e.Id);
+            var links = _trackFileService.GetForSeries(seriesId).ToLookup(l => l.EpisodeFileId);
 
             foreach (var episodeFile in episodeFiles)
             {
-                var localEpisodeFile = episodeFile;
-                episodeFile.Episodes = new List<Episode>(episodes.Where(e => e.EpisodeFileId == localEpisodeFile.Id));
+                episodeFile.Episodes = links[episodeFile.Id].Select(l => l.EpisodeId)
+                    .Distinct().Where(episodes.ContainsKey).Select(id => episodes[id]).ToList();
             }
 
             return episodeFiles;

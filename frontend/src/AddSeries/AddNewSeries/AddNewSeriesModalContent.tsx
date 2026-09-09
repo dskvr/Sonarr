@@ -22,6 +22,7 @@ import ModalHeader from 'Components/Modal/ModalHeader';
 import Popover from 'Components/Tooltip/Popover';
 import { getValidationFailures } from 'Helpers/Hooks/useApiMutation';
 import { icons, inputTypes, kinds, tooltipPositions } from 'Helpers/Props';
+import AdditionalQualityProfiles from 'Series/QualityProfiles/AdditionalQualityProfiles';
 import { SeriesType } from 'Series/Series';
 import SeriesPoster from 'Series/SeriesPoster';
 import { useIsWindows } from 'System/Status/useSystemStatus';
@@ -44,6 +45,8 @@ function AddNewSeriesModalContent({
 }: AddNewSeriesModalContentProps) {
   const { title, year, overview, images, folder } = series;
   const options = useAddSeriesOptions();
+  const [additionalQualityProfileIds, setAdditionalQualityProfileIds] =
+    useState<number[]>([]);
   const isSmallScreen = useAppDimension('isSmallScreen');
   const isWindows = useIsWindows();
 
@@ -87,6 +90,13 @@ function AddNewSeriesModalContent({
     []
   );
 
+  const handleAdditionalQualityProfilesChange = useCallback(
+    ({ value }: InputChanged<number | number[]>) => {
+      setAdditionalQualityProfileIds(value as number[]);
+    },
+    []
+  );
+
   const handleAddSeriesPress = useCallback(() => {
     addSeries({
       ...series,
@@ -97,6 +107,9 @@ function AddNewSeriesModalContent({
         searchForCutoffUnmetEpisodes: searchForCutoffUnmetEpisodes.value,
       },
       qualityProfileId: qualityProfileId.value,
+      ...(additionalQualityProfileIds.length
+        ? { additionalQualityProfileIds }
+        : {}),
       seriesType,
       seasonFolder: seasonFolder.value,
       tags: tags.value,
@@ -107,6 +120,7 @@ function AddNewSeriesModalContent({
     rootFolderPath,
     monitor,
     qualityProfileId,
+    additionalQualityProfileIds,
     seasonFolder,
     searchForMissingEpisodes,
     searchForCutoffUnmetEpisodes,
@@ -204,6 +218,12 @@ function AddNewSeriesModalContent({
                   {...qualityProfileId}
                 />
               </FormGroup>
+
+              <AdditionalQualityProfiles
+                qualityProfileId={qualityProfileId.value}
+                value={additionalQualityProfileIds}
+                onChange={handleAdditionalQualityProfilesChange}
+              />
 
               <FormGroup>
                 <FormLabel>

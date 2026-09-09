@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { SelectProvider, useSelect } from 'App/Select/SelectContext';
 import CommandNames from 'Commands/CommandNames';
 import { useExecuteCommand } from 'Commands/useCommands';
@@ -17,6 +17,7 @@ import { useSingleSeries } from 'Series/useSeries';
 import { useNamingSettings } from 'Settings/MediaManagement/Naming/useNamingSettings';
 import { CheckInputChanged } from 'typings/inputs';
 import translate from 'Utilities/String/translate';
+import getSafeRenameFiles from './getSafeRenameFiles';
 import OrganizePreviewRow from './OrganizePreviewRow';
 import useOrganizePreview, { OrganizePreviewModel } from './useOrganizePreview';
 import styles from './OrganizePreviewModalContent.css';
@@ -59,8 +60,15 @@ function OrganizePreviewModalContentInner({
 
   const series = useSingleSeries(seriesId)!;
 
-  const { allSelected, allUnselected, getSelectedIds, selectAll, unselectAll } =
-    useSelect<OrganizePreviewModel>();
+  const {
+    allSelected,
+    allUnselected,
+    getSelectedIds,
+    useSelectedIds,
+    selectAll,
+    unselectAll,
+  } = useSelect<OrganizePreviewModel>();
+  const selectedIds = useSelectedIds();
 
   const isFetching = isPreviewFetching || isNamingFetching;
   const isPopulated = isPreviewFetched && isNamingFetched;
@@ -82,7 +90,11 @@ function OrganizePreviewModalContentInner({
   );
 
   const handleOrganizePress = useCallback(() => {
-    const files = getSelectedIds();
+    const files = getSafeRenameFiles(items, getSelectedIds());
+
+    if (!files.length) {
+      return;
+    }
 
     executeCommand({
       name: CommandNames.RenameFiles,
@@ -91,7 +103,7 @@ function OrganizePreviewModalContentInner({
     });
 
     onModalClose();
-  }, [seriesId, getSelectedIds, executeCommand, onModalClose]);
+  }, [seriesId, items, getSelectedIds, executeCommand, onModalClose]);
 
   return (
     <ModalContent onModalClose={onModalClose}>
@@ -148,6 +160,7 @@ function OrganizePreviewModalContentInner({
                     id={item.episodeFileId}
                     existingPath={item.existingPath}
                     newPath={item.newPath}
+                    error={item.error}
                   />
                 );
               })}
@@ -164,13 +177,20 @@ function OrganizePreviewModalContentInner({
             name="selectAll"
             ariaLabel={translate('SelectAll')}
             value={selectAllValue}
+            isDisabled={!items.some((item) => !item.error)}
             onChange={handleSelectAllChange}
           />
         ) : null}
 
         <Button onPress={onModalClose}>{translate('Cancel')}</Button>
 
-        <Button kind={kinds.PRIMARY} onPress={handleOrganizePress}>
+        <Button
+          kind={kinds.PRIMARY}
+          isDisabled={
+            isFetching || !getSafeRenameFiles(items, selectedIds).length
+          }
+          onPress={handleOrganizePress}
+        >
           {translate('Organize')}
         </Button>
       </ModalFooter>
@@ -184,9 +204,13 @@ function OrganizePreviewModalContent({
   onModalClose,
 }: OrganizePreviewModalContentProps) {
   const { items } = useOrganizePreview(seriesId, seasonNumber);
+  const selectableItems = useMemo(
+    () => items.filter((item) => !item.error),
+    [items]
+  );
 
   return (
-    <SelectProvider<OrganizePreviewModel> items={items}>
+    <SelectProvider<OrganizePreviewModel> items={selectableItems}>
       <OrganizePreviewModalContentInner
         seriesId={seriesId}
         seasonNumber={seasonNumber}

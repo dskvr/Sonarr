@@ -15,6 +15,7 @@ public class SeriesStatisticsResource
     public List<string>? ReleaseGroups { get; set; }
     public List<ReleaseType>? ReleaseTypes { get; set; }
     public List<Quality>? EpisodeFileQualities { get; set; }
+    public List<QualityTrackStatisticsResource> QualityTracks { get; set; } = [];
 
     public decimal PercentOfEpisodes
     {
@@ -44,7 +45,8 @@ public static class SeriesStatisticsResourceMapper
             SizeOnDisk = model.SizeOnDisk,
             ReleaseGroups = model.ReleaseGroups,
             ReleaseTypes = model.ReleaseTypes,
-            EpisodeFileQualities = model.EpisodeFileQualities
+            EpisodeFileQualities = model.EpisodeFileQualities,
+            QualityTracks = model.QualityTracks.Select(t => t.ToResource()).ToList()
         };
     }
 }

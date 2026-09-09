@@ -7,6 +7,8 @@ import StatusIndicator from 'Components/StatusIndicator';
 import useEpisode, { EpisodeEntity } from 'Episode/useEpisode';
 import { useEpisodeFile } from 'EpisodeFile/EpisodeFileProvider';
 import { icons, kinds, sizes } from 'Helpers/Props';
+import EpisodeQualityTrackSummary from 'Series/QualityProfiles/EpisodeQualityTrackSummary';
+import { getEpisodeQualityTrackState } from 'Series/QualityProfiles/qualityTrackState';
 import isBefore from 'Utilities/Date/isBefore';
 import translate from 'Utilities/String/translate';
 import EpisodeQuality from './EpisodeQuality';
@@ -34,6 +36,36 @@ function EpisodeStatus({
 
   if (!episode) {
     return null;
+  }
+
+  if (getEpisodeQualityTrackState(episode.qualityTracks).isMultiple) {
+    return (
+      <div>
+        <EpisodeQualityTrackSummary tracks={episode.qualityTracks} />
+        {queueItem ? (
+          <QueueDetails
+            {...queueItem}
+            progressBar={
+              <ProgressBar
+                progress={
+                  queueItem.size
+                    ? 100 - (queueItem.sizeLeft / queueItem.size) * 100
+                    : 0
+                }
+                kind={kinds.PURPLE}
+                size={sizes.MEDIUM}
+              />
+            }
+          />
+        ) : null}
+        {!queueItem && grabbed ? (
+          <Icon
+            name={icons.DOWNLOADING}
+            title={translate('EpisodeIsDownloading')}
+          />
+        ) : null}
+      </div>
+    );
   }
 
   if (isQueued) {

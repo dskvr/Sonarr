@@ -31,6 +31,7 @@ import { align, icons, kinds, scrollDirections } from 'Helpers/Props';
 import { SortDirection } from 'Helpers/Props/sortDirections';
 import SelectEpisodeModal from 'InteractiveImport/Episode/SelectEpisodeModal';
 import { SelectedEpisode } from 'InteractiveImport/Episode/SelectEpisodeModalContent';
+import { hasSameImportMapping } from 'InteractiveImport/importMapping';
 import ImportMode from 'InteractiveImport/ImportMode';
 import SelectIndexerFlagsModal from 'InteractiveImport/IndexerFlags/SelectIndexerFlagsModal';
 import InteractiveImport, {
@@ -55,11 +56,14 @@ import useInteractiveImport, {
 } from 'InteractiveImport/useInteractiveImport';
 import Language from 'Language/Language';
 import { QualityModel } from 'Quality/Quality';
+import {
+  getImportQualityTrackTargets,
+  getImportTargetKeys,
+} from 'Series/QualityProfiles/qualityTrackState';
 import Series from 'Series/Series';
 import { SortCallback } from 'typings/callbacks';
 import { CheckInputChanged } from 'typings/inputs';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
-import hasDifferentItems from 'Utilities/Object/hasDifferentItems';
 import translate from 'Utilities/String/translate';
 import InteractiveImportRow from './InteractiveImportRow';
 import styles from './InteractiveImportModalContent.css';
@@ -177,27 +181,6 @@ const importModeOptions: SelectInputOption[] = [
     value: () => translate('HardlinkCopyFiles'),
   },
 ];
-
-function isSameEpisodeFile(
-  file: InteractiveImport,
-  originalFile?: InteractiveImport
-) {
-  const { series, seasonNumber, episodes } = file;
-
-  if (!originalFile) {
-    return false;
-  }
-
-  if (!originalFile.series || series?.id !== originalFile.series.id) {
-    return false;
-  }
-
-  if (seasonNumber !== originalFile.seasonNumber) {
-    return false;
-  }
-
-  return !hasDifferentItems(originalFile.episodes, episodes);
-}
 
 const filterExistingFilesStore = create<boolean>(() => false);
 
@@ -500,7 +483,8 @@ function InteractiveImportModalContentInner(
       return;
     }
 
-    const seenEpisodeIds = new Set<number>();
+    const seenEpisodeIds = new Set<string>();
+    let hasInvalidTargets = false;
     let hasDuplicateEpisodes = false;
 
     items.forEach((item) => {
@@ -555,11 +539,28 @@ function InteractiveImportModalContentInner(
           return;
         }
 
-        if (!hasDuplicateEpisodes) {
-          for (const episode of episodes) {
-            const hasAlreadySeen = seenEpisodeIds.has(episode.id);
+        const targets = getImportQualityTrackTargets(
+          series.qualityTracks,
+          item.targetQualityTrackIds
+        );
 
-            seenEpisodeIds.add(episode.id);
+        if (
+          (series.qualityTracks?.filter((track) => track.enabled).length ?? 0) >
+            1 &&
+          !targets?.length
+        ) {
+          hasInvalidTargets = true;
+          return;
+        }
+
+        if (!hasDuplicateEpisodes) {
+          for (const targetKey of getImportTargetKeys(
+            episodes.map((episode) => episode.id),
+            targets
+          )) {
+            const hasAlreadySeen = seenEpisodeIds.has(targetKey);
+
+            seenEpisodeIds.add(targetKey);
 
             if (hasAlreadySeen) {
               hasDuplicateEpisodes = true;
@@ -573,7 +574,7 @@ function InteractiveImportModalContentInner(
         if (episodeFileId) {
           const originalItem = originalItems.find((i) => i.id === item.id);
 
-          if (isSameEpisodeFile(item, originalItem)) {
+          if (hasSameImportMapping(item, originalItem)) {
             existingFiles.push({
               id: episodeFileId,
               releaseGroup,
@@ -592,6 +593,7 @@ function InteractiveImportModalContentInner(
           folderName: item.folderName,
           seriesId: series.id,
           episodeIds: episodes.map((e) => e.id),
+          targetQualityTrackIds: targets,
           releaseGroup,
           quality,
           languages,
@@ -602,6 +604,13 @@ function InteractiveImportModalContentInner(
         });
       }
     });
+
+    if (hasInvalidTargets) {
+      setInteractiveImportErrorMessage(
+        translate('SelectTargetQualityProfiles')
+      );
+      return;
+    }
 
     if (hasDuplicateEpisodes) {
       setInteractiveImportErrorMessage(
@@ -708,6 +717,8 @@ function InteractiveImportModalContentInner(
     (series: Series) => {
       const updates = {
         series,
+        targetQualityTrackIds: undefined,
+        resetQualityTrackTargets: true,
         seasonNumber: undefined,
         episodes: [],
       };

@@ -213,6 +213,7 @@ namespace NzbDrone.Core.MediaFiles
                 };
             }
 
+            var resolvedDirectory = MediaFileRecoveryPaths.ResolveDirectoryPath(directoryInfo.FullName);
             var decisions = _importDecisionMaker.GetImportDecisions(videoFiles.ToList(), series, downloadClientItem, downloadClientItemInfo, folderInfo, true);
             var importResults = _importApprovedEpisodes.Import(decisions, true, downloadClientItem, importMode);
 
@@ -223,13 +224,16 @@ namespace NzbDrone.Core.MediaFiles
 
             if (importMode == ImportMode.Move &&
                 importResults.Any(i => i.Result == ImportResultType.Imported) &&
-                ShouldDeleteFolder(directoryInfo, series))
+                importResults.Where(i => i.Result == ImportResultType.Imported).All(i => i.ImportDecision.LocalEpisode.ResolvedImportSourcePath == null ||
+                    MediaFileRecoveryPaths.ResolveFilePath(i.ImportDecision.LocalEpisode.Path).PathEquals(i.ImportDecision.LocalEpisode.ResolvedImportSourcePath)) &&
+                MediaFileRecoveryPaths.ResolveDirectoryPath(directoryInfo.FullName).PathEquals(resolvedDirectory) &&
+                ShouldDeleteFolder(new DirectoryInfo(resolvedDirectory), series))
             {
                 _logger.Debug("Deleting folder after importing valid files");
 
                 try
                 {
-                    _diskProvider.DeleteFolder(directoryInfo.FullName, true);
+                    _diskProvider.DeleteFolder(resolvedDirectory, true);
                 }
                 catch (IOException e)
                 {

@@ -18,6 +18,8 @@ import useEpisode from 'Episode/useEpisode';
 import { icons, kinds, tooltipPositions } from 'Helpers/Props';
 import Language from 'Language/Language';
 import { QualityModel } from 'Quality/Quality';
+import QualityTrackNames from 'Series/QualityProfiles/QualityTrackNames';
+import { getHistoryQualityTrackIds } from 'Series/QualityProfiles/qualityTrackState';
 import { useSingleSeries } from 'Series/useSeries';
 import { CustomFormat } from 'Settings/CustomFormats/CustomFormats/useCustomFormats';
 import { HistoryData, HistoryEventType } from 'typings/History';
@@ -118,7 +120,13 @@ function SeriesHistoryRow({
         />
       </TableRowCell>
 
-      <TableRowCell className={styles.sourceTitle}>{sourceTitle}</TableRowCell>
+      <TableRowCell className={styles.sourceTitle}>
+        {sourceTitle}
+        <QualityTrackNames
+          series={series}
+          trackIds={getHistoryQualityTrackIds(data)}
+        />
+      </TableRowCell>
 
       <TableRowCell>
         <EpisodeLanguages languages={languages} />

@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.History;
 
 namespace NzbDrone.Core.Download.TrackedDownloads
@@ -28,6 +29,17 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             {
                 _logger.Trace("No history for {0}", trackedDownload.DownloadItem.Title);
                 return false;
+            }
+
+            if (trackedDownload.RemoteEpisode.TargetQualityTrackIds != null)
+            {
+                var targets = trackedDownload.RemoteEpisode.TargetQualityTrackIds;
+                return targets.Any() && trackedDownload.RemoteEpisode.Episodes.Any() && trackedDownload.RemoteEpisode.Episodes.All(episode => targets.All(trackId =>
+                {
+                    var last = historyItems.FirstOrDefault(h => h.EpisodeId == episode.Id &&
+                        (QualityTrackSnapshot.ReadTargets(h.Data) ?? QualityTrackSnapshot.LegacyTargets(trackedDownload.RemoteEpisode.Series)).Contains(trackId));
+                    return last?.EventType == EpisodeHistoryEventType.DownloadFolderImported;
+                }));
             }
 
             var allEpisodesImportedInHistory = trackedDownload.RemoteEpisode.Episodes.All(e =>

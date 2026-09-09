@@ -60,6 +60,60 @@ namespace NzbDrone.Core.Test.Download.DownloadApprovedReportsTests
         }
 
         [Test]
+        public async Task should_download_distinct_releases_for_independent_quality_tracks()
+        {
+            var hd = GetRemoteEpisode(new List<Episode> { GetEpisode(1) }, new QualityModel(Quality.HDTV1080p));
+            var uhd = GetRemoteEpisode(new List<Episode> { GetEpisode(1) }, new QualityModel(Quality.WEBDL2160p));
+            hd.TargetQualityTrackIds = [10];
+            hd.Release.Guid = "hd";
+            uhd.TargetQualityTrackIds = [20];
+            uhd.Release.Guid = "uhd";
+
+            var result = await Subject.ProcessDecisions([new DownloadDecision(hd), new DownloadDecision(uhd)]);
+
+            result.Grabbed.Should().HaveCount(2);
+            Mocker.GetMock<IDownloadService>().Verify(v => v.DownloadReport(It.IsAny<RemoteEpisode>(), null), Times.Exactly(2));
+        }
+
+        [Test]
+        public async Task should_combine_selected_identical_release_into_one_download()
+        {
+            var first = GetRemoteEpisode(new List<Episode> { GetEpisode(1) }, new QualityModel(Quality.HDTV1080p));
+            var second = GetRemoteEpisode(new List<Episode> { GetEpisode(1) }, new QualityModel(Quality.HDTV1080p));
+            first.TargetQualityTrackIds = [10];
+            first.Release.Guid = "shared";
+            second.TargetQualityTrackIds = [20];
+            second.Release = first.Release;
+
+            var result = await Subject.ProcessDecisions([new DownloadDecision(first), new DownloadDecision(second)]);
+
+            result.Grabbed.Should().ContainSingle().Which.RemoteEpisode.TargetQualityTrackIds.Should().BeEquivalentTo([10, 20]);
+            first.TargetQualityTrackIds.Should().Equal(10);
+            second.TargetQualityTrackIds.Should().Equal(20);
+            Mocker.GetMock<IDownloadService>().Verify(v => v.DownloadReport(It.IsAny<RemoteEpisode>(), null), Times.Once());
+        }
+
+        [Test]
+        public async Task should_preserve_other_tracks_better_ranked_release()
+        {
+            var sharedFirst = GetRemoteEpisode(new List<Episode> { GetEpisode(1) }, new QualityModel(Quality.HDTV1080p));
+            var preferredSecond = GetRemoteEpisode(new List<Episode> { GetEpisode(1) }, new QualityModel(Quality.WEBDL2160p));
+            var sharedSecond = GetRemoteEpisode(new List<Episode> { GetEpisode(1) }, new QualityModel(Quality.HDTV1080p));
+            sharedFirst.TargetQualityTrackIds = [10];
+            sharedFirst.Release.Guid = "shared";
+            preferredSecond.TargetQualityTrackIds = [20];
+            preferredSecond.Release.Guid = "preferred";
+            sharedSecond.TargetQualityTrackIds = [20];
+            sharedSecond.Release = sharedFirst.Release;
+
+            var result = await Subject.ProcessDecisions([new DownloadDecision(sharedFirst), new DownloadDecision(preferredSecond), new DownloadDecision(sharedSecond)]);
+
+            result.Grabbed.Should().HaveCount(2);
+            result.Grabbed[0].RemoteEpisode.TargetQualityTrackIds.Should().Equal(10);
+            result.Grabbed[1].RemoteEpisode.Release.Guid.Should().Be("preferred");
+        }
+
+        [Test]
         public async Task should_download_report_if_episode_was_not_already_downloaded()
         {
             var episodes = new List<Episode> { GetEpisode(1) };

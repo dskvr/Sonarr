@@ -16,6 +16,8 @@ namespace NzbDrone.Core.Parser.Model
         }
 
         public string Guid { get; set; }
+        public List<int> TargetQualityTrackIds { get; set; }
+        public Dictionary<int, string> TargetQualityTrackSignatures { get; set; }
         public string Title { get; set; }
         public long Size { get; set; }
         public string DownloadUrl { get; set; }
@@ -80,6 +82,11 @@ namespace NzbDrone.Core.Parser.Model
             private set
             {
             }
+        }
+
+        public ReleaseInfo Clone()
+        {
+            return (ReleaseInfo)MemberwiseClone();
         }
 
         public override string ToString()

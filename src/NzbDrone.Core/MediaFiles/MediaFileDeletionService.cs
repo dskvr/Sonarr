@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using NLog;
 using NzbDrone.Common.Disk;
@@ -36,6 +37,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IConfigService _configService;
         private readonly ICommandResultReporter _commandResultReporter;
         private readonly IEventAggregator _eventAggregator;
+        private readonly IUpgradeMediaFiles _episodeFileUpgrader;
         private readonly Logger _logger;
 
         public MediaFileDeletionService(IDiskProvider diskProvider,
@@ -46,6 +48,7 @@ namespace NzbDrone.Core.MediaFiles
                                         IConfigService configService,
                                         ICommandResultReporter commandResultReporter,
                                         IEventAggregator eventAggregator,
+                                        IUpgradeMediaFiles episodeFileUpgrader,
                                         Logger logger)
         {
             _diskProvider = diskProvider;
@@ -56,10 +59,33 @@ namespace NzbDrone.Core.MediaFiles
             _configService = configService;
             _commandResultReporter = commandResultReporter;
             _eventAggregator = eventAggregator;
+            _episodeFileUpgrader = episodeFileUpgrader;
             _logger = logger;
         }
 
         public void DeleteEpisodeFile(Series series, EpisodeFile episodeFile)
+        {
+            _episodeFileUpgrader.RecoverImports(series);
+            lock (MediaFileOperationLock.ForSeries(series.Id))
+            {
+                series = _seriesService.GetSeries(series.Id);
+                _episodeFileUpgrader.RecoverFileOperations(series);
+                var currentFile = _mediaFileService.Get(new[] { episodeFile.Id }).SingleOrDefault();
+                if (currentFile == null)
+                {
+                    return;
+                }
+
+                if (currentFile.SeriesId != series.Id)
+                {
+                    throw new NzbDroneClientException(HttpStatusCode.Conflict, "Episode file belongs to another series.");
+                }
+
+                DeleteCurrentEpisodeFile(series, currentFile);
+            }
+        }
+
+        private void DeleteCurrentEpisodeFile(Series series, EpisodeFile episodeFile)
         {
             var fullPath = Path.Combine(series.Path, episodeFile.RelativePath);
             var rootFolder = _rootFolderService.GetBestRootFolderPath(series.Path);
@@ -106,6 +132,10 @@ namespace NzbDrone.Core.MediaFiles
                 try
                 {
                     var series = _seriesService.GetSeries(seriesId);
+                    _episodeFileUpgrader.RecoverImports(series);
+                    using var operation = MediaFileOperationLock.Acquire(new[] { seriesId });
+                    series = _seriesService.GetSeries(seriesId);
+                    _episodeFileUpgrader.RecoverFileOperations(series);
                     var mediaFiles = _mediaFileService.GetFilesBySeries(seriesId);
 
                     _logger.ProgressDebug("{0}: Deleting episode files}", series.Title);

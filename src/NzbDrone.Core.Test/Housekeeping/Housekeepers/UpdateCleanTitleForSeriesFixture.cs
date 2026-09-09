@@ -1,3 +1,5 @@
+using System;
+using System.Linq.Expressions;
 using FizzWare.NBuilder;
 using Moq;
 using NUnit.Framework;
@@ -21,11 +23,17 @@ namespace NzbDrone.Core.Test.Housekeeping.Housekeepers
             Mocker.GetMock<ISeriesRepository>()
                  .Setup(s => s.All())
                  .Returns(new[] { series });
+            Expression<Func<Series, object>>[] updatedFields = null;
+            Mocker.GetMock<ISeriesRepository>()
+                .Setup(s => s.SetFields(It.IsAny<Series>(), It.IsAny<Expression<Func<Series, object>>[]>()))
+                .Callback<Series, Expression<Func<Series, object>>[]>((model, fields) => updatedFields = fields);
 
             Subject.Clean();
 
             Mocker.GetMock<ISeriesRepository>()
-                .Verify(v => v.Update(It.Is<Series>(s => s.CleanTitle == "fulltitle")), Times.Once());
+                .Verify(v => v.Update(It.IsAny<Series>()), Times.Never());
+            Assert.That(updatedFields, Has.Length.EqualTo(1));
+            Assert.That(updatedFields[0].Compile()(series), Is.EqualTo("fulltitle"));
         }
 
         [Test]
@@ -43,7 +51,7 @@ namespace NzbDrone.Core.Test.Housekeeping.Housekeepers
             Subject.Clean();
 
             Mocker.GetMock<ISeriesRepository>()
-                .Verify(v => v.Update(It.Is<Series>(s => s.CleanTitle == "fulltitle")), Times.Never());
+                .Verify(v => v.SetFields(It.IsAny<Series>(), It.IsAny<Expression<Func<Series, object>>[]>()), Times.Never());
         }
     }
 }

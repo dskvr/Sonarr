@@ -9,7 +9,7 @@ namespace NzbDrone.Core.Extras.Others
 {
     public interface IOtherExtraFileRenamer
     {
-        void RenameOtherExtraFile(Series series, string path);
+        void RenameOtherExtraFile(Series series, string path, int? episodeFileId = null);
     }
 
     public class OtherExtraFileRenamer : IOtherExtraFileRenamer
@@ -33,7 +33,7 @@ namespace NzbDrone.Core.Extras.Others
             _otherExtraFileService = otherExtraFileService;
         }
 
-        public void RenameOtherExtraFile(Series series, string path)
+        public void RenameOtherExtraFile(Series series, string path, int? episodeFileId = null)
         {
             if (!_diskProvider.FileExists(path))
             {
@@ -45,10 +45,15 @@ namespace NzbDrone.Core.Extras.Others
 
             if (otherExtraFile != null)
             {
+                if (episodeFileId.HasValue && otherExtraFile.EpisodeFileId != episodeFileId.Value)
+                {
+                    throw new IOException("Extra file destination belongs to another episode file: " + path);
+                }
+
                 var newPath = path + "-orig";
 
                 // Recycle an existing -orig file.
-                RemoveOtherExtraFile(series, newPath);
+                RemoveOtherExtraFile(series, newPath, episodeFileId);
 
                 // Rename the file to .*-orig
                 _diskProvider.MoveFile(path, newPath);
@@ -58,7 +63,7 @@ namespace NzbDrone.Core.Extras.Others
             }
         }
 
-        private void RemoveOtherExtraFile(Series series, string path)
+        private void RemoveOtherExtraFile(Series series, string path, int? episodeFileId)
         {
             if (!_diskProvider.FileExists(path))
             {
@@ -70,6 +75,11 @@ namespace NzbDrone.Core.Extras.Others
 
             if (otherExtraFile != null)
             {
+                if (episodeFileId.HasValue && otherExtraFile.EpisodeFileId != episodeFileId.Value)
+                {
+                    throw new IOException("Extra file backup belongs to another episode file: " + path);
+                }
+
                 var subfolder = Path.GetDirectoryName(relativePath);
                 _recycleBinProvider.DeleteFile(path, subfolder);
             }

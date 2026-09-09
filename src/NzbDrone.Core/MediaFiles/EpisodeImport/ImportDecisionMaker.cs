@@ -4,6 +4,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.MediaFiles.EpisodeImport.Aggregation;
@@ -18,6 +19,7 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
         List<ImportDecision> GetImportDecisions(List<string> videoFiles, Series series, bool filterExistingFiles);
         List<ImportDecision> GetImportDecisions(List<string> videoFiles, Series series, DownloadClientItem downloadClientItem, ParsedEpisodeInfo downloadClientItemInfo, ParsedEpisodeInfo folderInfo, bool sceneSource);
         List<ImportDecision> GetImportDecisions(List<string> videoFiles, Series series, DownloadClientItem downloadClientItem, ParsedEpisodeInfo downloadClientItemInfo, ParsedEpisodeInfo folderInfo, bool sceneSource, bool filterExistingFiles);
+        List<ImportDecision> GetImportDecisions(List<string> videoFiles, Series series, DownloadClientItem downloadClientItem, ParsedEpisodeInfo downloadClientItemInfo, ParsedEpisodeInfo folderInfo, bool sceneSource, bool filterExistingFiles, bool resetQualityTrackTargets, List<int> targetQualityTrackIds);
         ImportDecision GetDecision(LocalEpisode localEpisode, DownloadClientItem downloadClientItem);
     }
 
@@ -30,6 +32,8 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
         private readonly IDetectSample _detectSample;
         private readonly ITrackedDownloadService _trackedDownloadService;
         private readonly ILocalEpisodeCustomFormatCalculationService _formatCalculator;
+        private readonly ISeriesQualityTrackService _qualityTrackService;
+        private readonly IEpisodeTrackFileService _trackFileService;
         private readonly Logger _logger;
 
         public ImportDecisionMaker(IEnumerable<IImportDecisionEngineSpecification> specifications,
@@ -39,6 +43,8 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
                                    IDetectSample detectSample,
                                    ITrackedDownloadService trackedDownloadService,
                                    ILocalEpisodeCustomFormatCalculationService formatCalculator,
+                                   ISeriesQualityTrackService qualityTrackService,
+                                   IEpisodeTrackFileService trackFileService,
                                    Logger logger)
         {
             _specifications = specifications;
@@ -48,6 +54,8 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
             _detectSample = detectSample;
             _trackedDownloadService = trackedDownloadService;
             _formatCalculator = formatCalculator;
+            _qualityTrackService = qualityTrackService;
+            _trackFileService = trackFileService;
             _logger = logger;
         }
 
@@ -67,6 +75,11 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
         }
 
         public List<ImportDecision> GetImportDecisions(List<string> videoFiles, Series series, DownloadClientItem downloadClientItem, ParsedEpisodeInfo downloadClientItemInfo, ParsedEpisodeInfo folderInfo, bool sceneSource, bool filterExistingFiles)
+        {
+            return GetImportDecisions(videoFiles, series, downloadClientItem, downloadClientItemInfo, folderInfo, sceneSource, filterExistingFiles, false, null);
+        }
+
+        public List<ImportDecision> GetImportDecisions(List<string> videoFiles, Series series, DownloadClientItem downloadClientItem, ParsedEpisodeInfo downloadClientItemInfo, ParsedEpisodeInfo folderInfo, bool sceneSource, bool filterExistingFiles, bool resetQualityTrackTargets, List<int> targetQualityTrackIds)
         {
             var newFiles = filterExistingFiles ? _mediaFileService.FilterExistingFiles(videoFiles.ToList(), series) : videoFiles.ToList();
 
@@ -88,6 +101,8 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
                     FolderEpisodeInfo = folderInfo,
                     Path = file,
                     SceneSource = sceneSource,
+                    ResetQualityTrackTargets = resetQualityTrackTargets,
+                    TargetQualityTrackIds = targetQualityTrackIds?.ToList(),
                     ExistingFile = series.Path.IsParentPath(file),
                     OtherVideoFiles = nonSampleVideoFileCount > 1
                 };
@@ -100,10 +115,130 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
 
         public ImportDecision GetDecision(LocalEpisode localEpisode, DownloadClientItem downloadClientItem)
         {
+            if (localEpisode.Series != null && localEpisode.Episodes.Any(e => e.SeriesId != localEpisode.Series.Id))
+            {
+                return new ImportDecision(localEpisode, new ImportRejection(ImportRejectionReason.InvalidSeasonOrEpisode, "Selected episodes must belong to the selected series."));
+            }
+
+            var tracks = localEpisode.Series == null ? new List<SeriesQualityTrack>() : _qualityTrackService.GetEnabledTracks(localEpisode.Series.Id);
+            if (tracks.Count > 0)
+            {
+                return GetTrackDecision(localEpisode, downloadClientItem, tracks);
+            }
+
             var reasons = _specifications.Select(c => EvaluateSpec(c, localEpisode, downloadClientItem))
                                          .Where(c => c != null);
 
             return new ImportDecision(localEpisode, reasons.ToArray());
+        }
+
+        private ImportDecision GetTrackDecision(LocalEpisode localEpisode, DownloadClientItem downloadClientItem, List<SeriesQualityTrack> tracks)
+        {
+            var targets = localEpisode.TargetQualityTrackIds;
+            var hasSavedTargets = localEpisode.TargetQualityTrackSignatures != null;
+            if (!localEpisode.ResetQualityTrackTargets && downloadClientItem?.DownloadId.IsNotNullOrWhiteSpace() == true)
+            {
+                var remote = _trackedDownloadService.Find(downloadClientItem.DownloadId)?.RemoteEpisode;
+                hasSavedTargets = remote?.TargetQualityTrackIds != null;
+                if (targets == null || (remote?.TargetQualityTrackIds != null && targets.All(remote.TargetQualityTrackIds.Contains)))
+                {
+                    localEpisode.TargetQualityTrackSignatures ??= remote?.TargetQualityTrackSignatures;
+                    localEpisode.LegacyQualityTrackTarget = remote?.LegacyQualityTrackTarget == true;
+                }
+
+                targets ??= remote?.TargetQualityTrackIds;
+                if (targets == null && localEpisode.LegacyQualityTrackTarget)
+                {
+                    targets = tracks.Where(t => t.IsPrimary).Select(t => t.Id).ToList();
+                }
+            }
+
+            var links = _trackFileService.GetForSeries(localEpisode.Series.Id);
+            if (targets == null && localEpisode.ExistingFile && !localEpisode.ResetQualityTrackTargets)
+            {
+                var existingFile = _mediaFileService.GetFilesWithRelativePath(localEpisode.Series.Id, localEpisode.Series.Path.GetRelativePath(localEpisode.Path)).SingleOrDefault();
+                if (existingFile != null)
+                {
+                    targets = links.Where(l => l.EpisodeFileId == existingFile.Id).Select(l => l.TrackId).Distinct().ToList();
+                }
+            }
+
+            var candidates = targets == null ? tracks : tracks.Where(t => targets.Contains(t.Id)).ToList();
+            var accepted = new List<int>();
+            var matchingTargets = new List<int>();
+            var rejected = new List<ImportRejection>();
+
+            foreach (var track in candidates)
+            {
+                var snapshot = localEpisode.Clone();
+                snapshot.Series = QualityTrackSnapshot.CreateSeries(localEpisode.Series, track);
+                snapshot.Episodes = QualityTrackSnapshot.CreateEpisodes(localEpisode.Episodes, snapshot.Series, track.Id, links);
+                snapshot.TargetQualityTrackIds = [track.Id];
+                var profile = track.QualityProfile.Value;
+                snapshot.CustomFormatScore = profile.CalculateCustomFormatScore(localEpisode.CustomFormats);
+                snapshot.OriginalFileNameCustomFormatScore = profile.CalculateCustomFormatScore(localEpisode.OriginalFileNameCustomFormats);
+
+                var criteriaChanged = downloadClientItem != null && hasSavedTargets && !localEpisode.LegacyQualityTrackTarget && !localEpisode.ResetQualityTrackTargets &&
+                    (localEpisode.TargetQualityTrackSignatures == null || !localEpisode.TargetQualityTrackSignatures.TryGetValue(track.Id, out var signature) ||
+                     signature != QualityTrackSnapshot.ProfileSignature(profile));
+                if ((tracks.Count > 1 || criteriaChanged) && (!profile.Items[profile.GetIndex(localEpisode.Quality.Quality).Index].Allowed || snapshot.CustomFormatScore < profile.MinFormatScore))
+                {
+                    rejected.Add(new ImportRejection(ImportRejectionReason.NotQualityUpgrade, $"File does not meet quality profile '{profile.Name}'."));
+                    continue;
+                }
+
+                matchingTargets.Add(track.Id);
+
+                var reasons = _specifications.Select(c => EvaluateSpec(c, snapshot, downloadClientItem)).Where(r => r != null).ToList();
+                if (reasons.Count == 0)
+                {
+                    accepted.Add(track.Id);
+                }
+                else
+                {
+                    rejected.AddRange(reasons);
+                }
+            }
+
+            if (targets == null && downloadClientItem != null && accepted.Count > 1)
+            {
+                localEpisode.TargetQualityTrackIds = new List<int>();
+                return new ImportDecision(localEpisode, new ImportRejection(ImportRejectionReason.DecisionError, "Multiple quality profiles match this untracked download. Select the intended profiles."));
+            }
+
+            if (accepted.Count > 0)
+            {
+                localEpisode.TargetQualityTrackIds = accepted;
+            }
+            else if (targets != null || tracks.Count == 1)
+            {
+                // An ordinary rejection must not discard a valid selection used for manual overrides or metadata edits.
+                localEpisode.TargetQualityTrackIds = candidates.Select(track => track.Id).ToList();
+            }
+            else
+            {
+                localEpisode.TargetQualityTrackIds = matchingTargets.Count == 1 ? matchingTargets : new List<int>();
+            }
+
+            if (accepted.Count > 0)
+            {
+                localEpisode.TargetQualityTrackSignatures = tracks.Where(t => accepted.Contains(t.Id))
+                    .ToDictionary(t => t.Id, t => QualityTrackSnapshot.ProfileSignature(t.QualityProfile.Value));
+                localEpisode.ExpectedTrackFiles = localEpisode.Episodes.SelectMany(e => accepted.Select(trackId => new EpisodeTrackFile
+                {
+                    EpisodeId = e.Id,
+                    TrackId = trackId,
+                    EpisodeFileId = links.SingleOrDefault(l => l.EpisodeId == e.Id && l.TrackId == trackId)?.EpisodeFileId ?? 0
+                })).ToList();
+                return new ImportDecision(localEpisode);
+            }
+
+            if (rejected.Count == 0)
+            {
+                rejected.Add(new ImportRejection(ImportRejectionReason.DecisionError, "Selected quality profiles are no longer enabled. Choose import targets again."));
+            }
+
+            return new ImportDecision(localEpisode, rejected.ToArray());
         }
 
         private ImportDecision GetDecision(LocalEpisode localEpisode, DownloadClientItem downloadClientItem, bool otherFiles)
