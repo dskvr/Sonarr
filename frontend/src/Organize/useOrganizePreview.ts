@@ -8,6 +8,7 @@ export interface OrganizePreviewModel extends ModelBase {
   episodeFileId: number;
   existingPath: string;
   newPath: string;
+  error?: string;
 }
 
 const DEFAULT_ORGANIZE_PREVIEW: OrganizePreviewModel[] = [];

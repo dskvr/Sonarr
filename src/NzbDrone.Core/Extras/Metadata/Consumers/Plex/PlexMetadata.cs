@@ -13,11 +13,13 @@ namespace NzbDrone.Core.Extras.Metadata.Consumers.Plex
     {
         private readonly IEpisodeService _episodeService;
         private readonly IMediaFileService _mediaFileService;
+        private readonly IEpisodeTrackFileService _trackFileService;
 
-        public PlexMetadata(IEpisodeService episodeService, IMediaFileService mediaFileService)
+        public PlexMetadata(IEpisodeService episodeService, IMediaFileService mediaFileService, IEpisodeTrackFileService trackFileService)
         {
             _episodeService = episodeService;
             _mediaFileService = mediaFileService;
+            _trackFileService = trackFileService;
         }
 
         public override string Name => "Plex";
@@ -63,12 +65,19 @@ namespace NzbDrone.Core.Extras.Metadata.Consumers.Plex
 
             if (Settings.EpisodeMappings)
             {
-                var episodes = _episodeService.GetEpisodeBySeries(series.Id);
+                var episodes = _episodeService.GetEpisodeBySeries(series.Id).ToDictionary(e => e.Id);
                 var episodeFiles = _mediaFileService.GetFilesBySeries(series.Id);
+                var links = _trackFileService.GetForSeries(series.Id).ToLookup(l => l.EpisodeFileId);
 
                 foreach (var episodeFile in episodeFiles)
                 {
-                    var episodesInFile = episodes.Where(e => e.EpisodeFileId == episodeFile.Id);
+                    var episodesInFile = links[episodeFile.Id].Select(l => l.EpisodeId).Distinct()
+                        .Where(episodes.ContainsKey).Select(id => episodes[id]).OrderBy(e => e.EpisodeNumber).ToList();
+                    if (episodesInFile.Count == 0)
+                    {
+                        continue;
+                    }
+
                     var episodeFormat = $"S{episodeFile.SeasonNumber:00}{string.Join("-", episodesInFile.Select(e => $"E{e.EpisodeNumber:00}"))}";
 
                     if (episodeFile.SeasonNumber == 0)

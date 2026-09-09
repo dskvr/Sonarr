@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
@@ -13,6 +14,7 @@ namespace NzbDrone.Core.Notifications
         public LocalEpisode EpisodeInfo { get; set; }
         public EpisodeFile EpisodeFile { get; set; }
         public List<DeletedEpisodeFile> OldFiles { get; set; }
+        public bool IsUpgrade => EpisodeInfo?.IsUpgrade == true || OldFiles?.Any() == true;
         public string SourcePath { get; set; }
         public DownloadClientItemClientInfo DownloadClientInfo { get; set; }
         public string DownloadId { get; set; }

@@ -52,6 +52,56 @@ namespace NzbDrone.Core.Tv
                 return episode;
             });
 
+        public override Episode Update(Episode model)
+        {
+            UpdateMany(new[] { model });
+            ModelUpdated(model);
+            return model;
+        }
+
+        public override void UpdateMany(IList<Episode> models)
+        {
+            if (models.Any(e => e.Id == 0))
+            {
+                throw new InvalidOperationException("Can't update model with ID 0");
+            }
+
+            using var operationLock = MediaFileOperationLock.Acquire(models.Select(e => e.SeriesId));
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            foreach (var episode in models)
+            {
+                Update(connection, transaction, episode);
+            }
+
+            EpisodeTrackFileRepository.UpdateProjections(connection, transaction, _database.DatabaseType, models.Select(e => e.Id).ToList());
+            transaction.Commit();
+            var stored = Get(models.Select(e => e.Id)).ToDictionary(e => e.Id);
+            foreach (var episode in models)
+            {
+                episode.EpisodeFileId = stored[episode.Id].EpisodeFileId;
+                episode.EpisodeFile = stored[episode.Id].EpisodeFile;
+                episode.TrackFiles = stored[episode.Id].TrackFiles;
+            }
+        }
+
+        public override void DeleteMany(IEnumerable<int> ids)
+        {
+            var episodeIds = ids.Distinct().ToList();
+            var condition = _database.DatabaseType == DatabaseType.PostgreSQL ? "= ANY(@episodeIds)" : "IN @episodeIds";
+            if (episodeIds.Count == 0)
+            {
+                return;
+            }
+
+            using var operationLock = MediaFileOperationLock.Acquire(Query(e => episodeIds.Contains(e.Id)).Select(e => e.SeriesId));
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            connection.Execute($"DELETE FROM \"EpisodeTrackFiles\" WHERE \"EpisodeId\" {condition}", new { episodeIds = episodeIds.ToArray() }, transaction);
+            connection.Execute($"DELETE FROM \"Episodes\" WHERE \"Id\" {condition}", new { episodeIds = episodeIds.ToArray() }, transaction);
+            transaction.Commit();
+        }
+
         public Episode Find(int seriesId, int season, int episodeNumber)
         {
             return Query(s => s.SeriesId == seriesId && s.SeasonNumber == season && s.EpisodeNumber == episodeNumber)
@@ -91,7 +141,7 @@ namespace NzbDrone.Core.Tv
 
         public List<Episode> GetEpisodeByFileId(int fileId)
         {
-            return Query(e => e.EpisodeFileId == fileId).ToList();
+            return Query(Builder().Where("\"Episodes\".\"Id\" IN (SELECT \"EpisodeId\" FROM \"EpisodeTrackFiles\" WHERE \"EpisodeFileId\" = @fileId)", new { fileId }));
         }
 
         public List<Episode> EpisodesWithFiles(int seriesId)
@@ -225,7 +275,7 @@ namespace NzbDrone.Core.Tv
             }
             else if (monitor == MonitorTypes.Missing)
             {
-                predicate = "\"SeasonNumber\" > 0 AND \"EpisodeFileId\" = 0";
+                predicate = $"\"SeasonNumber\" > 0 AND {BuildMissingFileWhereClause()}";
             }
             else if (monitor == MonitorTypes.Existing)
             {
@@ -270,19 +320,45 @@ namespace NzbDrone.Core.Tv
 
         public void SetFileId(Episode episode, int fileId)
         {
-            episode.EpisodeFileId = fileId;
+            using var operationLock = MediaFileOperationLock.Acquire(new[] { episode.SeriesId });
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            var primaryId = connection.ExecuteScalar<int>(
+                @"SELECT t.""Id"" FROM ""SeriesQualityTracks"" t
+                JOIN ""EpisodeFiles"" f ON f.""SeriesId"" = t.""SeriesId""
+                JOIN ""Episodes"" e ON e.""SeriesId"" = t.""SeriesId"" AND e.""Id"" = @Id
+                WHERE t.""SeriesId"" = @SeriesId AND t.""IsPrimary"" = true AND f.""Id"" = @fileId",
+                new { episode.Id, episode.SeriesId, fileId },
+                transaction);
+            if (primaryId == 0)
+            {
+                throw new InvalidOperationException("The episode file must belong to a series with a primary quality profile.");
+            }
 
-            SetFields(episode, ep => ep.EpisodeFileId);
+            connection.Execute(
+                @"INSERT INTO ""EpisodeTrackFiles"" (""EpisodeId"", ""TrackId"", ""EpisodeFileId"")
+                VALUES (@Id, @primaryId, @fileId)
+                ON CONFLICT (""EpisodeId"", ""TrackId"") DO UPDATE SET ""EpisodeFileId"" = @fileId",
+                new { episode.Id, primaryId, fileId },
+                transaction);
+            EpisodeTrackFileRepository.UpdateProjections(connection, transaction, _database.DatabaseType, new List<int> { episode.Id });
+            transaction.Commit();
+            episode.EpisodeFileId = fileId;
 
             ModelUpdated(episode, true);
         }
 
         public void ClearFileId(Episode episode, bool unmonitor)
         {
-            episode.EpisodeFileId = 0;
-            episode.Monitored &= !unmonitor;
-
-            SetFields(episode, ep => ep.EpisodeFileId, ep => ep.Monitored);
+            using var operationLock = MediaFileOperationLock.Acquire(new[] { episode.SeriesId });
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            connection.Execute("DELETE FROM \"EpisodeTrackFiles\" WHERE \"EpisodeId\" = @Id AND \"EpisodeFileId\" = @EpisodeFileId", episode, transaction);
+            EpisodeTrackFileRepository.UpdateProjections(connection, transaction, _database.DatabaseType, new List<int> { episode.Id });
+            episode.EpisodeFileId = connection.ExecuteScalar<int>("SELECT \"EpisodeFileId\" FROM \"Episodes\" WHERE \"Id\" = @Id", episode, transaction);
+            episode.Monitored &= !unmonitor || episode.HasFile;
+            connection.Execute("UPDATE \"Episodes\" SET \"Monitored\" = @Monitored WHERE \"Id\" = @Id", episode, transaction);
+            transaction.Commit();
 
             ModelUpdated(episode, true);
         }
@@ -291,7 +367,7 @@ namespace NzbDrone.Core.Tv
         {
             var builder = Builder()
                 .Join<Episode, Series>((l, r) => l.SeriesId == r.Id)
-                .Where<Episode>(f => f.EpisodeFileId == 0)
+                .Where(BuildMissingFileWhereClause())
                 .Where<Episode>(f => f.SeasonNumber >= startingSeasonNumber)
                 .Where(BuildAirDateUtcCutoffWhereClause(currentTime));
 
@@ -315,25 +391,36 @@ namespace NzbDrone.Core.Tv
                                  currentTime.ToString("yyyy-MM-dd HH:mm:ss"));
         }
 
+        private string BuildEnabledTrackWhereClause()
+        {
+            var enabled = _database.DatabaseType == DatabaseType.PostgreSQL ? "true" : "1";
+            return $"\"t\".\"SeriesId\" = \"Episodes\".\"SeriesId\" AND \"t\".\"Enabled\" = {enabled}";
+        }
+
+        private string BuildMissingFileWhereClause()
+        {
+            var enabledTrack = BuildEnabledTrackWhereClause();
+
+            return $@"((NOT EXISTS (SELECT 1 FROM ""SeriesQualityTracks"" AS ""t"" WHERE {enabledTrack})
+                        AND ""Episodes"".""EpisodeFileId"" = 0)
+                       OR EXISTS (SELECT 1 FROM ""SeriesQualityTracks"" AS ""t""
+                                  WHERE {enabledTrack}
+                                  AND NOT EXISTS (SELECT 1 FROM ""EpisodeTrackFiles"" AS ""link""
+                                                  INNER JOIN ""EpisodeFiles"" AS ""file"" ON ""file"".""Id"" = ""link"".""EpisodeFileId""
+                                                  WHERE ""link"".""TrackId"" = ""t"".""Id"" AND ""link"".""EpisodeId"" = ""Episodes"".""Id"")))";
+        }
+
         private SqlBuilder EpisodesWhereCutoffUnmetBuilder(List<QualitiesBelowCutoff> qualitiesBelowCutoff, int startingSeasonNumber, HashSet<int> seriesTags, List<int> qualities, bool joinQualityRanks)
         {
             var builder = Builder()
                 .Join<Episode, Series>((e, s) => e.SeriesId == s.Id)
                 .LeftJoin<Episode, EpisodeFile>((e, ef) => e.EpisodeFileId == ef.Id)
-                .Where<Episode>(e => e.EpisodeFileId != 0)
                 .Where<Episode>(e => e.SeasonNumber >= startingSeasonNumber)
-                .Where(
-                    string.Format("({0})",
-                        BuildQualityCutoffWhereClause(qualitiesBelowCutoff)));
+                .Where(BuildTrackQualityCutoffWhereClause(qualitiesBelowCutoff, qualities));
 
             if (seriesTags is { Count: > 0 })
             {
                 builder = builder.Where(BuildSeriesTagsWhereClause(seriesTags));
-            }
-
-            if (qualities is { Count: > 0 })
-            {
-                builder = builder.Where(BuildQualityFilterWhereClause(qualities));
             }
 
             builder = builder
@@ -355,7 +442,28 @@ namespace NzbDrone.Core.Tv
             return builder;
         }
 
-        private string BuildQualityCutoffWhereClause(List<QualitiesBelowCutoff> qualitiesBelowCutoff)
+        private string BuildTrackQualityCutoffWhereClause(List<QualitiesBelowCutoff> qualitiesBelowCutoff, List<int> qualities)
+        {
+            var enabledTrack = BuildEnabledTrackWhereClause();
+            var legacyCutoff = BuildQualityCutoffWhereClause(qualitiesBelowCutoff, "\"Series\".\"QualityProfileId\"", "\"EpisodeFiles\"");
+            var trackCutoff = BuildQualityCutoffWhereClause(qualitiesBelowCutoff, "\"t\".\"QualityProfileId\"", "\"trackFile\"");
+
+            if (qualities is { Count: > 0 })
+            {
+                legacyCutoff += $" AND {BuildQualityFilterWhereClause(qualities, "\"EpisodeFiles\"")}";
+                trackCutoff += $" AND {BuildQualityFilterWhereClause(qualities, "\"trackFile\"")}";
+            }
+
+            return $@"((NOT EXISTS (SELECT 1 FROM ""SeriesQualityTracks"" AS ""t"" WHERE {enabledTrack})
+                        AND {legacyCutoff})
+                       OR EXISTS (SELECT 1 FROM ""EpisodeTrackFiles"" AS ""link""
+                                  INNER JOIN ""SeriesQualityTracks"" AS ""t"" ON ""t"".""Id"" = ""link"".""TrackId""
+                                  INNER JOIN ""EpisodeFiles"" AS ""trackFile"" ON ""trackFile"".""Id"" = ""link"".""EpisodeFileId""
+                                  WHERE ""link"".""EpisodeId"" = ""Episodes"".""Id"" AND {enabledTrack}
+                                  AND {trackCutoff}))";
+        }
+
+        private string BuildQualityCutoffWhereClause(List<QualitiesBelowCutoff> qualitiesBelowCutoff, string profileColumn, string fileTable)
         {
             var clauses = new List<string>();
 
@@ -363,7 +471,7 @@ namespace NzbDrone.Core.Tv
             {
                 foreach (var belowCutoff in profile.QualityIds)
                 {
-                    clauses.Add(string.Format("(\"Series\".\"QualityProfileId\" = {0} AND \"EpisodeFiles\".\"Quality\" LIKE '%_quality_: {1},%')", profile.ProfileId, belowCutoff));
+                    clauses.Add($"({profileColumn} = {profile.ProfileId} AND {fileTable}.\"Quality\" LIKE '%_quality_: {belowCutoff},%')");
                 }
             }
 
@@ -386,10 +494,10 @@ namespace NzbDrone.Core.Tv
                 ids);
         }
 
-        private string BuildQualityFilterWhereClause(List<int> qualityIds)
+        private string BuildQualityFilterWhereClause(List<int> qualityIds, string fileTable)
         {
             var clauses = qualityIds
-                .Select(id => string.Format("\"EpisodeFiles\".\"Quality\" LIKE '%_quality_: {0},%'", id))
+                .Select(id => $"{fileTable}.\"Quality\" LIKE '%_quality_: {id},%'")
                 .ToList();
 
             return string.Format("({0})", string.Join(" OR ", clauses));

@@ -5,6 +5,7 @@ using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download.Aggregation;
 using NzbDrone.Core.Download.History;
 using NzbDrone.Core.History;
@@ -186,6 +187,41 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
                 if (trackedDownload.RemoteEpisode != null)
                 {
+                    var grab = _downloadHistoryService.GetLatestGrab(downloadItem.DownloadId);
+                    var episodeGrab = historyItems.FirstOrDefault(h => h.EventType == EpisodeHistoryEventType.Grabbed);
+                    var savedTargets = QualityTrackSnapshot.ReadTargets(grab?.Data) ?? QualityTrackSnapshot.ReadTargets(episodeGrab?.Data);
+                    var mappedSeriesId = trackedDownload.RemoteEpisode.Series?.Id;
+                    trackedDownload.RemoteEpisode.LegacyQualityTrackTarget = savedTargets == null && mappedSeriesId > 0 &&
+                        (grab?.SeriesId == mappedSeriesId || episodeGrab?.SeriesId == mappedSeriesId);
+                    trackedDownload.RemoteEpisode.TargetQualityTrackSignatures = QualityTrackSnapshot.ReadSignatures(grab?.Data) ?? QualityTrackSnapshot.ReadSignatures(episodeGrab?.Data);
+
+                    if (grab?.Release != null)
+                    {
+                        trackedDownload.RemoteEpisode.Release = grab.Release.Clone();
+                    }
+
+                    var legacyTargets = QualityTrackSnapshot.LegacyTargets(trackedDownload.RemoteEpisode.Series);
+                    trackedDownload.RemoteEpisode.TargetQualityTrackIds = savedTargets ??
+                        (trackedDownload.RemoteEpisode.LegacyQualityTrackTarget && !legacyTargets.Contains(0) ? legacyTargets : null);
+
+                    var conflictingSeriesId = grab?.SeriesId > 0 && grab.SeriesId != mappedSeriesId ? grab.SeriesId :
+                        episodeGrab?.SeriesId > 0 && episodeGrab.SeriesId != mappedSeriesId ? episodeGrab.SeriesId : (int?)null;
+
+                    if (mappedSeriesId.HasValue && conflictingSeriesId.HasValue)
+                    {
+                        trackedDownload.RemoteEpisode.TargetQualityTrackIds = [];
+                        trackedDownload.RemoteEpisode.LegacyQualityTrackTarget = false;
+                        trackedDownload.Warn(
+                            "Saved grab for series {0} ({1}) does not match parsed series {2}; choose the correct series and quality profiles using manual import",
+                            conflictingSeriesId.Value,
+                            grab?.SeriesId == conflictingSeriesId ? grab.SourceTitle : episodeGrab?.SourceTitle,
+                            mappedSeriesId.Value);
+                    }
+                    else if (savedTargets?.Count == 0)
+                    {
+                        trackedDownload.Warn("Saved quality profile targets are invalid; select the intended profiles using manual import");
+                    }
+
                     _aggregationService.Augment(trackedDownload.RemoteEpisode);
 
                     // Calculate custom formats
@@ -253,8 +289,18 @@ namespace NzbDrone.Core.Download.TrackedDownloads
         private void UpdateCachedItem(TrackedDownload trackedDownload)
         {
             var parsedEpisodeInfo = Parser.Parser.ParseTitle(trackedDownload.DownloadItem.Title);
+            var savedTargets = trackedDownload.RemoteEpisode?.TargetQualityTrackIds;
+            var savedSignatures = trackedDownload.RemoteEpisode?.TargetQualityTrackSignatures;
+            var legacyTarget = trackedDownload.RemoteEpisode?.LegacyQualityTrackTarget ?? false;
 
             trackedDownload.RemoteEpisode = parsedEpisodeInfo == null ? null : _parsingService.Map(parsedEpisodeInfo, 0, 0, null);
+
+            if (trackedDownload.RemoteEpisode != null)
+            {
+                trackedDownload.RemoteEpisode.TargetQualityTrackIds = savedTargets;
+                trackedDownload.RemoteEpisode.TargetQualityTrackSignatures = savedSignatures;
+                trackedDownload.RemoteEpisode.LegacyQualityTrackTarget = legacyTarget;
+            }
 
             _aggregationService.Augment(trackedDownload.RemoteEpisode);
         }

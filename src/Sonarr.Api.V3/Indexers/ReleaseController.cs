@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
@@ -33,6 +34,7 @@ namespace Sonarr.Api.V3.Indexers
         private readonly ISeriesService _seriesService;
         private readonly IEpisodeService _episodeService;
         private readonly IParsingService _parsingService;
+        private readonly ISeriesQualityTrackService _qualityTrackService;
         private readonly Logger _logger;
 
         private readonly ICached<RemoteEpisode> _remoteEpisodeCache;
@@ -47,6 +49,7 @@ namespace Sonarr.Api.V3.Indexers
                              IParsingService parsingService,
                              ICacheManager cacheManager,
                              IQualityProfileService qualityProfileService,
+                             ISeriesQualityTrackService qualityTrackService,
                              Logger logger)
             : base(qualityProfileService)
         {
@@ -58,6 +61,7 @@ namespace Sonarr.Api.V3.Indexers
             _seriesService = seriesService;
             _episodeService = episodeService;
             _parsingService = parsingService;
+            _qualityTrackService = qualityTrackService;
             _logger = logger;
 
             PostValidator.RuleFor(s => s.IndexerId).ValidId();
@@ -81,6 +85,9 @@ namespace Sonarr.Api.V3.Indexers
 
             try
             {
+                remoteEpisode = remoteEpisode.Clone();
+                remoteEpisode.Release = remoteEpisode.Release.Clone();
+
                 if (release.ShouldOverride == true)
                 {
                     Ensure.That(release.SeriesId, () => release.SeriesId).IsNotNull();
@@ -156,6 +163,24 @@ namespace Sonarr.Api.V3.Indexers
                 {
                     throw new NzbDroneClientException(HttpStatusCode.NotFound, "Unable to parse episodes in the release, will need to be manually provided");
                 }
+
+                var tracks = _qualityTrackService.GetEnabledTracks(remoteEpisode.Series.Id);
+
+                if (tracks.Count != 1)
+                {
+                    throw new NzbDroneClientException(HttpStatusCode.BadRequest, "This series has multiple quality profiles. Use the v5 release API to select target profiles.");
+                }
+
+                if (remoteEpisode.Episodes.Any(e => e.SeriesId != remoteEpisode.Series.Id))
+                {
+                    throw new NzbDroneClientException(HttpStatusCode.BadRequest, "All selected episodes must belong to the selected series.");
+                }
+
+                remoteEpisode.TargetQualityTrackIds = new List<int> { tracks[0].Id };
+                remoteEpisode.Release.TargetQualityTrackIds = remoteEpisode.TargetQualityTrackIds.ToList();
+                remoteEpisode.TargetQualityTrackSignatures = remoteEpisode.TargetQualityTrackSignatures?
+                    .Where(s => s.Key == tracks[0].Id).ToDictionary(s => s.Key, s => s.Value) ?? new Dictionary<int, string>();
+                remoteEpisode.Release.TargetQualityTrackSignatures = new Dictionary<int, string>(remoteEpisode.TargetQualityTrackSignatures);
 
                 await _downloadService.DownloadReport(remoteEpisode, release.DownloadClientId);
             }

@@ -26,6 +26,7 @@ namespace NzbDrone.Core.MediaFiles
         public IndexerFlags IndexerFlags { get; set; }
         public MediaInfoModel MediaInfo { get; set; }
         public LazyLoaded<List<Episode>> Episodes { get; set; }
+        public LazyLoaded<List<EpisodeTrackFile>> TrackFiles { get; set; }
         public LazyLoaded<Series> Series { get; set; }
         public List<Language> Languages { get; set; }
         public ReleaseType ReleaseType { get; set; }

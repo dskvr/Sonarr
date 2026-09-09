@@ -14,7 +14,21 @@ namespace NzbDrone.Core.Parser.Model
 {
     public class LocalEpisode
     {
+        public LocalEpisode Clone()
+        {
+            return (LocalEpisode)MemberwiseClone();
+        }
+
         public string Path { get; set; }
+        public List<int> TargetQualityTrackIds { get; set; }
+        public Dictionary<int, string> TargetQualityTrackSignatures { get; set; }
+        public bool LegacyQualityTrackTarget { get; set; }
+        public bool ManualImport { get; set; }
+        public bool ResetQualityTrackTargets { get; set; }
+        public string ResolvedImportDestinationPath { get; set; }
+        public string ResolvedImportSourcePath { get; set; }
+        public List<EpisodeTrackFile> ExpectedTrackFiles { get; set; }
+        public bool IsUpgrade { get; set; }
         public long Size { get; set; }
         public ParsedEpisodeInfo FileEpisodeInfo { get; set; }
         public ParsedEpisodeInfo DownloadClientEpisodeInfo { get; set; }

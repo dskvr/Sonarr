@@ -12,6 +12,9 @@ namespace NzbDrone.Core.Parser.Model
     public class RemoteEpisode
     {
         public ReleaseInfo Release { get; set; }
+        public List<int> TargetQualityTrackIds { get; set; }
+        public Dictionary<int, string> TargetQualityTrackSignatures { get; set; }
+        public bool LegacyQualityTrackTarget { get; set; }
         public ParsedEpisodeInfo ParsedEpisodeInfo { get; set; }
         public SceneMapping SceneMapping { get; set; }
         public int MappedSeasonNumber { get; set; }
@@ -36,6 +39,11 @@ namespace NzbDrone.Core.Parser.Model
         public bool IsRecentEpisode()
         {
             return Episodes.Any(e => e.AirDateUtc >= DateTime.UtcNow.Date.AddDays(-14));
+        }
+
+        public RemoteEpisode Clone()
+        {
+            return (RemoteEpisode)MemberwiseClone();
         }
 
         public override string ToString()

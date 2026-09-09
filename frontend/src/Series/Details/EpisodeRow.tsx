@@ -7,6 +7,7 @@ import Column from 'Components/Table/Column';
 import TableRow from 'Components/Table/TableRow';
 import Popover from 'Components/Tooltip/Popover';
 import Tooltip from 'Components/Tooltip/Tooltip';
+import { EpisodeQualityTrack } from 'Episode/Episode';
 import EpisodeFormats from 'Episode/EpisodeFormats';
 import EpisodeNumber from 'Episode/EpisodeNumber';
 import EpisodeSearchCell from 'Episode/EpisodeSearchCell';
@@ -17,6 +18,8 @@ import EpisodeFileLanguages from 'EpisodeFile/EpisodeFileLanguages';
 import { useEpisodeFile } from 'EpisodeFile/EpisodeFileProvider';
 import MediaInfo from 'EpisodeFile/MediaInfo';
 import { icons } from 'Helpers/Props';
+import EpisodeQualityTrackSummary from 'Series/QualityProfiles/EpisodeQualityTrackSummary';
+import { getEpisodeQualityTrackState } from 'Series/QualityProfiles/qualityTrackState';
 import { useSingleSeries } from 'Series/useSeries';
 import MediaInfoModel from 'typings/MediaInfo';
 import formatBytes from 'Utilities/Number/formatBytes';
@@ -29,6 +32,7 @@ interface EpisodeRowProps {
   id: number;
   seriesId: number;
   episodeFileId?: number;
+  qualityTracks?: EpisodeQualityTrack[];
   monitored: boolean;
   seasonNumber: number;
   episodeNumber: number;
@@ -62,6 +66,7 @@ function EpisodeRow({
   id,
   seriesId,
   episodeFileId,
+  qualityTracks,
   monitored,
   seasonNumber,
   episodeNumber,
@@ -92,6 +97,10 @@ function EpisodeRow({
     alternateTitles = [],
   } = useSingleSeries(seriesId)!;
   const episodeFile = useEpisodeFile(episodeFileId);
+  const trackState = getEpisodeQualityTrackState(qualityTracks);
+  const hasVersions =
+    trackState.isMultiple ||
+    qualityTracks?.some((track) => !track.enabled && track.hasFile);
 
   const customFormats = episodeFile?.customFormats ?? [];
   const customFormatScore = episodeFile?.customFormatScore ?? 0;
@@ -162,6 +171,19 @@ function EpisodeRow({
                 finaleType={finaleType}
                 showOpenSeriesButton={false}
               />
+              {hasVersions ? (
+                <details>
+                  <summary>
+                    {translate(
+                      trackState.isMultiple ? 'Versions' : 'RetainedVersions'
+                    )}
+                  </summary>
+                  <EpisodeQualityTrackSummary
+                    tracks={qualityTracks}
+                    showFiles={true}
+                  />
+                </details>
+              ) : null}
             </TableRowCell>
           );
         }

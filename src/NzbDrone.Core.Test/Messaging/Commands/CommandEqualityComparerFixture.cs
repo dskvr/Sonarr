@@ -25,6 +25,49 @@ namespace NzbDrone.Core.Test.Messaging.Commands
         }
 
         [Test]
+        public void should_compare_targets_when_episode_selection_matches()
+        {
+            var command1 = new EpisodeSearchCommand { EpisodeIds = new List<int> { 1 }, TargetQualityTrackIds = new List<int> { 10 } };
+            var command2 = new EpisodeSearchCommand { EpisodeIds = new List<int> { 1 }, TargetQualityTrackIds = new List<int> { 20 } };
+
+            CommandEqualityComparer.Instance.Equals(command1, command2).Should().BeFalse();
+        }
+
+        [Test]
+        public void should_not_deduplicate_manual_imports_for_different_targets()
+        {
+            var path = GivenRandomPath();
+            var command1 = new ManualImportCommand
+            {
+                Files = new List<ManualImportFile> { new ManualImportFile { Path = path, TargetQualityTrackIds = new List<int> { 10 } } }
+            };
+            var command2 = new ManualImportCommand
+            {
+                Files = new List<ManualImportFile> { new ManualImportFile { Path = path, TargetQualityTrackIds = new List<int> { 20 } } }
+            };
+
+            CommandEqualityComparer.Instance.Equals(command1, command2).Should().BeFalse();
+        }
+
+        [Test]
+        public void should_compare_manual_target_sets_consistently_through_object_equality()
+        {
+            var path = GivenRandomPath();
+            var first = new ManualImportFile { Path = path, TargetQualityTrackIds = new List<int> { 10, 20 } };
+            var reordered = new ManualImportFile { Path = path, TargetQualityTrackIds = new List<int> { 20, 10 } };
+            var legacy = new ManualImportFile { Path = path };
+            var empty = new ManualImportFile { Path = path, TargetQualityTrackIds = new List<int>() };
+
+            first.Equals(reordered).Should().BeTrue();
+            first.Equals((object)reordered).Should().BeTrue();
+            first.Equals((object)legacy).Should().BeFalse();
+            legacy.Equals((object)first).Should().BeFalse();
+            legacy.Equals((object)empty).Should().BeFalse();
+            empty.Equals((object)legacy).Should().BeFalse();
+            legacy.Equals((object)new ManualImportFile { Path = path }).Should().BeTrue();
+        }
+
+        [Test]
         public void should_return_true_when_there_are_no_properties()
         {
             var command1 = new DownloadedEpisodesScanCommand();

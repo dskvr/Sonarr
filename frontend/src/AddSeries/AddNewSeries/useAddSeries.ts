@@ -12,7 +12,9 @@ interface AddSeriesPayload
     Omit<
       AddSeriesOptions,
       'monitor' | 'searchForMissingEpisodes' | 'searchForCutoffUnmetEpisodes'
-    > {}
+    > {
+  additionalQualityProfileIds?: number[];
+}
 
 const DEFAULT_SERIES: AddSeries[] = [];
 

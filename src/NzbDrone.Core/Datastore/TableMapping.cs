@@ -116,13 +116,31 @@ namespace NzbDrone.Core.Datastore
 
             Mapper.Entity<Series>("Series").RegisterModel()
                   .Ignore(s => s.RootFolderPath)
+                  .Ignore(s => s.AdditionalQualityProfileIds)
+                  .LazyLoad(s => s.QualityTracks,
+                            (db, parent) => db.Query<SeriesQualityTrack>(new SqlBuilder(db.DatabaseType).Where<SeriesQualityTrack>(t => t.SeriesId == parent.Id)).ToList(),
+                            s => s.Id > 0)
                   .HasOne(s => s.QualityProfile, s => s.QualityProfileId);
+
+            Mapper.Entity<SeriesQualityTrack>("SeriesQualityTracks").RegisterModel()
+                  .Ignore(t => t.EpisodeFileCount)
+                  .HasOne(t => t.QualityProfile, t => t.QualityProfileId)
+                  .LazyLoad(t => t.TrackFiles,
+                            (db, parent) => db.Query<EpisodeTrackFile>(new SqlBuilder(db.DatabaseType).Where<EpisodeTrackFile>(l => l.TrackId == parent.Id)).ToList(),
+                            t => t.Id > 0);
+
+            Mapper.Entity<EpisodeTrackFile>("EpisodeTrackFiles").RegisterModel()
+                  .HasOne(l => l.EpisodeFile, l => l.EpisodeFileId);
 
             Mapper.Entity<EpisodeFile>("EpisodeFiles").RegisterModel()
                   .HasOne(f => f.Series, f => f.SeriesId)
                   .LazyLoad(x => x.Episodes,
-                            (db, parent) => db.Query<Episode>(new SqlBuilder(db.DatabaseType).Where<Episode>(c => c.EpisodeFileId == parent.Id)).ToList(),
+                            (db, parent) => db.Query<Episode>(new SqlBuilder(db.DatabaseType).Where(
+                                "\"Episodes\".\"Id\" IN (SELECT \"EpisodeId\" FROM \"EpisodeTrackFiles\" WHERE \"EpisodeFileId\" = @fileId)", new { fileId = parent.Id })).ToList(),
                             t => t.Id > 0)
+                  .LazyLoad(f => f.TrackFiles,
+                            (db, parent) => db.Query<EpisodeTrackFile>(new SqlBuilder(db.DatabaseType).Where<EpisodeTrackFile>(l => l.EpisodeFileId == parent.Id)).ToList(),
+                            f => f.Id > 0)
                   .Ignore(f => f.Path);
 
             Mapper.Entity<Episode>("Episodes").RegisterModel()
@@ -130,6 +148,9 @@ namespace NzbDrone.Core.Datastore
                   .Ignore(e => e.Series)
                   .Ignore(e => e.HasFile)
                   .Ignore(e => e.AbsoluteEpisodeNumberAdded)
+                  .LazyLoad(e => e.TrackFiles,
+                            (db, parent) => db.Query<EpisodeTrackFile>(new SqlBuilder(db.DatabaseType).Where<EpisodeTrackFile>(l => l.EpisodeId == parent.Id)).ToList(),
+                            e => e.Id > 0)
                   .HasOne(s => s.EpisodeFile, s => s.EpisodeFileId);
 
             Mapper.Entity<QualityDefinition>("QualityDefinitions").RegisterModel()

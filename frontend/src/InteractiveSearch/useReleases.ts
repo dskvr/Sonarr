@@ -39,6 +39,8 @@ export interface ReleaseEpisode {
 }
 
 export interface Release extends ModelBase {
+  targetQualityTrackIds?: number[];
+  qualityTrackDecisions?: QualityTrackDecision[];
   parsedInfo: ParsedInfo;
   release: ReleaseInfo;
   decision: Decision;
@@ -56,6 +58,13 @@ export interface Release extends ModelBase {
   customFormats: CustomFormat[];
   customFormatScore: number;
   sceneMapping?: AlternateTitle;
+}
+
+export interface QualityTrackDecision {
+  trackId: number;
+  qualityProfileId: number;
+  decision: Decision;
+  customFormatScore: number;
 }
 
 export interface ParsedInfo {
@@ -485,6 +494,7 @@ interface OverrideRelease {
 }
 
 interface GrabRelease {
+  targetQualityTrackIds?: number[];
   guid: string;
   indexerId: number;
   override?: OverrideRelease;

@@ -30,6 +30,7 @@ import { SortDirection } from 'Helpers/Props/sortDirections';
 import InteractiveImportModal from 'InteractiveImport/InteractiveImportModal';
 import OrganizePreviewModal from 'Organize/OrganizePreviewModal';
 import SeriesHistoryModal from 'Series/History/SeriesHistoryModal';
+import QualityTrackSummary from 'Series/QualityProfiles/QualityTrackSummary';
 import SeasonInteractiveSearchModal from 'Series/Search/SeasonInteractiveSearchModal';
 import { Statistics } from 'Series/Series';
 import { useSingleSeries, useToggleSeasonMonitored } from 'Series/useSeries';
@@ -470,6 +471,12 @@ function SeriesDetailsSeason({
           </div>
         )}
       </div>
+
+      <QualityTrackSummary
+        seriesId={seriesId}
+        seasonNumber={seasonNumber}
+        tracks={statistics.qualityTracks}
+      />
 
       <div>
         {isExpanded ? (

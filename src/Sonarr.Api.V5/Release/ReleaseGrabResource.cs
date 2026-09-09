@@ -9,6 +9,7 @@ public class ReleaseGrabResource
     public required int IndexerId { get; set; }
     public OverrideReleaseResource? Override { get; set; }
     public SearchInfoResource? SearchInfo { get; set; }
+    public List<int>? TargetQualityTrackIds { get; set; }
 }
 
 public class OverrideReleaseResource

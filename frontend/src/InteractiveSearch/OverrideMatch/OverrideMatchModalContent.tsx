@@ -20,9 +20,12 @@ import SelectSeriesModal from 'InteractiveImport/Series/SelectSeriesModal';
 import { ReleaseEpisode, useGrabRelease } from 'InteractiveSearch/useReleases';
 import Language from 'Language/Language';
 import { QualityModel } from 'Quality/Quality';
+import QualityTrackSelect from 'Series/QualityProfiles/QualityTrackSelect';
+import { getImportQualityTrackTargets } from 'Series/QualityProfiles/qualityTrackState';
 import Series from 'Series/Series';
 import { useSingleSeries } from 'Series/useSeries';
 import { useEnabledDownloadClients } from 'Settings/DownloadClients/DownloadClients/useDownloadClients';
+import { InputChanged } from 'typings/inputs';
 import translate from 'Utilities/String/translate';
 import SelectDownloadClientModal from './DownloadClient/SelectDownloadClientModal';
 import OverrideMatchData from './OverrideMatchData';
@@ -42,6 +45,7 @@ export interface OverrideMatchModalContentProps {
   title: string;
   guid: string;
   seriesId?: number;
+  targetQualityTrackIds?: number[];
   seasonNumber?: number;
   episodes: ReleaseEpisode[];
   languages: Language[];
@@ -66,6 +70,9 @@ function OverrideMatchModalContent(props: OverrideMatchModalContentProps) {
     onModalClose,
   } = props;
 
+  const [selectedTargets, setSelectedTargets] = useState(
+    props.targetQualityTrackIds
+  );
   const [seriesId, setSeriesId] = useState(props.seriesId);
   const [seasonNumber, setSeasonNumber] = useState(props.seasonNumber);
   const [episodes, setEpisodes] = useState(props.episodes);
@@ -79,6 +86,18 @@ function OverrideMatchModalContent(props: OverrideMatchModalContentProps) {
   const previousIsGrabbing = usePrevious(isGrabbing);
 
   const series: Series | undefined = useSingleSeries(seriesId);
+  const targets = getImportQualityTrackTargets(
+    series?.qualityTracks,
+    selectedTargets
+  );
+  const showTargets =
+    (series?.qualityTracks?.filter((track) => track.enabled).length ?? 0) > 1;
+  const handleTargetsChange = useCallback(
+    ({ value }: InputChanged<number | number[]>) => {
+      setSelectedTargets(value as number[]);
+    },
+    []
+  );
   const { data: downloadClients } = useEnabledDownloadClients(protocol);
 
   const episodeInfo = useMemo(() => {
@@ -109,6 +128,7 @@ function OverrideMatchModalContent(props: OverrideMatchModalContentProps) {
   const onSeriesSelect = useCallback(
     (s: Series) => {
       setSeriesId(s.id);
+      setSelectedTargets(undefined);
       setSeasonNumber(undefined);
       setEpisodes([]);
       setSelectModalOpen(null);
@@ -192,7 +212,13 @@ function OverrideMatchModalContent(props: OverrideMatchModalContentProps) {
       return;
     }
 
+    if (showTargets && !targets?.length) {
+      setError(translate('SelectTargetQualityProfiles'));
+      return;
+    }
+
     grabRelease({
+      ...(targets ? { targetQualityTrackIds: targets } : {}),
       indexerId,
       guid,
       override: {
@@ -211,15 +237,17 @@ function OverrideMatchModalContent(props: OverrideMatchModalContentProps) {
     quality,
     languages,
     downloadClientId,
+    showTargets,
+    targets,
     setError,
     grabRelease,
   ]);
 
   useEffect(() => {
-    if (!isGrabbing && previousIsGrabbing) {
+    if (!isGrabbing && previousIsGrabbing && !grabError) {
       onModalClose();
     }
-  }, [isGrabbing, previousIsGrabbing, onModalClose]);
+  }, [isGrabbing, previousIsGrabbing, grabError, onModalClose]);
 
   return (
     <ModalContent onModalClose={onModalClose}>
@@ -310,6 +338,13 @@ function OverrideMatchModalContent(props: OverrideMatchModalContentProps) {
             />
           ) : null}
         </DescriptionList>
+        {showTargets && series?.qualityTracks ? (
+          <QualityTrackSelect
+            tracks={series.qualityTracks}
+            value={targets ?? []}
+            onChange={handleTargetsChange}
+          />
+        ) : null}
       </ModalBody>
 
       <ModalFooter className={styles.footer}>

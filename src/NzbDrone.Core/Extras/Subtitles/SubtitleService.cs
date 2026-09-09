@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using NLog;
 using NzbDrone.Common.Disk;
+using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Extras.Files;
@@ -31,8 +32,9 @@ namespace NzbDrone.Core.Extras.Subtitles
                                IDetectSample detectSample,
                                ISubtitleFileService subtitleFileService,
                                IMediaFileAttributeService mediaFileAttributeService,
+                               IAppFolderInfo appFolderInfo,
                                Logger logger)
-            : base(configService, diskProvider, diskTransferService, logger)
+            : base(configService, diskProvider, diskTransferService, subtitleFileService, appFolderInfo, logger)
         {
             _diskProvider = diskProvider;
             _detectSample = detectSample;
@@ -68,10 +70,13 @@ namespace NzbDrone.Core.Extras.Subtitles
             return Enumerable.Empty<SubtitleFile>();
         }
 
-        public override IEnumerable<ExtraFile> MoveFilesAfterRename(Series series, List<EpisodeFile> episodeFiles)
+        public override IEnumerable<ExtraFile> MoveFilesAfterRename(Series series, List<EpisodeFile> episodeFiles, bool requireSuccess = false)
         {
-            var subtitleFiles = _subtitleFileService.GetFilesBySeries(series.Id);
+            var subtitleFiles = episodeFiles.Count == 1
+                ? _subtitleFileService.GetFilesByEpisodeFile(episodeFiles[0].Id)
+                : _subtitleFileService.GetFilesBySeries(series.Id);
 
+            var failures = requireSuccess ? new List<Exception>() : null;
             var movedFiles = new List<SubtitleFile>();
 
             foreach (var episodeFile in episodeFiles)
@@ -94,12 +99,20 @@ namespace NzbDrone.Core.Extras.Subtitles
 
                         var suffix = GetSuffix(subtitleFile.Language, subtitleFile.Copy, subtitleFile.LanguageTags, multipleCopies, subtitleFile.Title);
 
-                        movedFiles.AddIfNotNull(MoveFile(series, episodeFile, subtitleFile, suffix));
+                        movedFiles.AddIfNotNull(MoveFile(series, episodeFile, subtitleFile, suffix, failures));
                     }
                 }
             }
 
-            _subtitleFileService.Upsert(movedFiles);
+            if (!requireSuccess)
+            {
+                _subtitleFileService.Upsert(movedFiles);
+            }
+
+            if (failures?.Count > 0)
+            {
+                throw new AggregateException("Extra files could not be moved after rename.", failures);
+            }
 
             return movedFiles;
         }

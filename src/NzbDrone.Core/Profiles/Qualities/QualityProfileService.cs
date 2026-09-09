@@ -6,6 +6,7 @@ using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.CustomFormats.Events;
 using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.Lifecycle;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Tv;
@@ -33,6 +34,7 @@ namespace NzbDrone.Core.Profiles.Qualities
         private readonly IImportListFactory _importListFactory;
         private readonly ICustomFormatService _formatService;
         private readonly ISeriesService _seriesService;
+        private readonly ISeriesQualityTrackService _qualityTrackService;
         private readonly IQualityProfileRankService _rankService;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
@@ -41,6 +43,7 @@ namespace NzbDrone.Core.Profiles.Qualities
                                      IImportListFactory importListFactory,
                                      ICustomFormatService formatService,
                                      ISeriesService seriesService,
+                                     ISeriesQualityTrackService qualityTrackService,
                                      IQualityProfileRankService rankService,
                                      IEventAggregator eventAggregator,
                                      Logger logger)
@@ -49,6 +52,7 @@ namespace NzbDrone.Core.Profiles.Qualities
             _importListFactory = importListFactory;
             _formatService = formatService;
             _seriesService = seriesService;
+            _qualityTrackService = qualityTrackService;
             _rankService = rankService;
             _eventAggregator = eventAggregator;
             _logger = logger;
@@ -56,6 +60,7 @@ namespace NzbDrone.Core.Profiles.Qualities
 
         public QualityProfile Add(QualityProfile profile)
         {
+            using var operationLock = MediaFileOperationLock.AcquireAll();
             var saved = _qualityProfileRepository.Insert(profile);
             _rankService.UpdateRanksForProfile(saved);
             return saved;
@@ -63,6 +68,7 @@ namespace NzbDrone.Core.Profiles.Qualities
 
         public void Update(QualityProfile profile)
         {
+            using var operationLock = MediaFileOperationLock.AcquireAll();
             _qualityProfileRepository.Update(profile);
             _rankService.UpdateRanksForProfile(profile);
             _eventAggregator.PublishEvent(new QualityProfileUpdatedEvent(profile.Id));
@@ -70,7 +76,10 @@ namespace NzbDrone.Core.Profiles.Qualities
 
         public void Delete(int id)
         {
-            if (_seriesService.GetAllSeries().Any(c => c.QualityProfileId == id) || _importListFactory.All().Any(c => c.QualityProfileId == id))
+            using var operationLock = MediaFileOperationLock.AcquireAll();
+            if (_seriesService.GetAllSeries().Any(c => c.QualityProfileId == id) ||
+                _qualityTrackService.IsProfileInUse(id) ||
+                _importListFactory.All().Any(c => c.QualityProfileId == id))
             {
                 var profile = _qualityProfileRepository.Get(id);
                 throw new QualityProfileInUseException(profile.Name);
@@ -272,6 +281,7 @@ namespace NzbDrone.Core.Profiles.Qualities
 
         public void UpdateAllSizeLimits(params QualityProfileSizeLimit[] sizeLimits)
         {
+            using var operationLock = MediaFileOperationLock.AcquireAll();
             var all = All();
 
             foreach (var qualityProfile in all)

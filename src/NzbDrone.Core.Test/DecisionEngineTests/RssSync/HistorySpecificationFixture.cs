@@ -105,6 +105,48 @@ namespace NzbDrone.Core.Test.DecisionEngineTests.RssSync
         }
 
         [Test]
+        public void should_ignore_other_tracks_recent_history()
+        {
+            _parseResultSingle.TargetQualityTrackIds = [20];
+            Mocker.GetMock<IHistoryService>().Setup(h => h.FindByEpisodeId(FIRST_EPISODE_ID)).Returns(new List<EpisodeHistory>
+            {
+                new()
+                {
+                    EventType = EpisodeHistoryEventType.Grabbed,
+                    Date = DateTime.UtcNow,
+                    Quality = _notupgradableQuality.Item1,
+                    Data = new Dictionary<string, string> { ["qualityTrackIds"] = "[10]" }
+                }
+            });
+
+            Subject.IsSatisfiedBy(_parseResultSingle, new()).Accepted.Should().BeTrue();
+        }
+
+        [Test]
+        public void should_find_matching_track_history_behind_another_tracks_event()
+        {
+            _parseResultSingle.TargetQualityTrackIds = [20];
+            Mocker.GetMock<IHistoryService>().Setup(h => h.FindByEpisodeId(FIRST_EPISODE_ID)).Returns(new List<EpisodeHistory>
+            {
+                new()
+                {
+                    EventType = EpisodeHistoryEventType.Grabbed,
+                    Date = DateTime.UtcNow,
+                    Data = new Dictionary<string, string> { ["qualityTrackIds"] = "[10]" }
+                },
+                new()
+                {
+                    EventType = EpisodeHistoryEventType.Grabbed,
+                    Date = DateTime.UtcNow.AddMinutes(-1),
+                    Quality = _notupgradableQuality.Item1,
+                    Data = new Dictionary<string, string> { ["qualityTrackIds"] = "[20]" }
+                }
+            });
+
+            Subject.IsSatisfiedBy(_parseResultSingle, new()).Accepted.Should().BeFalse();
+        }
+
+        [Test]
         public void should_return_true_if_it_is_a_search()
         {
             _upgradeHistory.IsSatisfiedBy(_parseResultMulti, new ReleaseDecisionInformation(false, new SeasonSearchCriteria())).Accepted.Should().BeTrue();

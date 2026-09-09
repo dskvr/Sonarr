@@ -27,6 +27,8 @@ public class ReleaseResource : RestResource
     public List<CustomFormatResource>? CustomFormats { get; set; }
     public int CustomFormatScore { get; set; }
     public AlternateTitleResource? SceneMapping { get; set; }
+    public List<int> TargetQualityTrackIds { get; set; } = [];
+    public List<ReleaseQualityTrackDecisionResource> QualityTrackDecisions { get; set; } = [];
 }
 
 public static class ReleaseResourceMapper
@@ -54,6 +56,14 @@ public static class ReleaseResourceMapper
             CustomFormatScore = remoteEpisode.CustomFormatScore,
             CustomFormats = remoteEpisode.CustomFormats?.ToResource(false),
             SceneMapping = remoteEpisode.SceneMapping?.ToResource(),
+            TargetQualityTrackIds = remoteEpisode.TargetQualityTrackIds ?? [],
+            QualityTrackDecisions = model.QualityTrackDecisions.SelectMany(d => (d.RemoteEpisode.TargetQualityTrackIds ?? []).Select(trackId => new ReleaseQualityTrackDecisionResource
+            {
+                TrackId = trackId,
+                QualityProfileId = d.RemoteEpisode.Series.QualityProfileId,
+                Decision = new ReleaseDecisionResource(d),
+                CustomFormatScore = d.RemoteEpisode.CustomFormatScore
+            })).ToList(),
         };
     }
 

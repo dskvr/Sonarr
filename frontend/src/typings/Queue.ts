@@ -45,6 +45,7 @@ interface Queue extends ModelBase {
   episodesWithFilesCount: number;
   seriesId?: number;
   episodeIds: number[];
+  targetQualityTrackIds?: number[];
   seasonNumbers: number[];
   downloadClientHasPostImportCategory: boolean;
   isFullSeason: boolean;

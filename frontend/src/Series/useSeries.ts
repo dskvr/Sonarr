@@ -732,10 +732,12 @@ interface BulkDeleteSeriesPayload {
   addImportListExclusion?: boolean;
 }
 
-interface SaveSeriesEditorPayload {
+export interface SaveSeriesEditorPayload {
   seriesIds: number[];
   monitored?: boolean;
   qualityProfileId?: number;
+  additionalQualityProfileIds?: number[];
+  applyAdditionalQualityProfiles?: 'add' | 'remove' | 'replace';
   seriesType?: string;
   seasonFolder?: boolean;
   rootFolderPath?: string;

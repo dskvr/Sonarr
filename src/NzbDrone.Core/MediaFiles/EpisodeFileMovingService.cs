@@ -84,6 +84,11 @@ namespace NzbDrone.Core.MediaFiles
         {
             var filePath = _buildFileNames.BuildFilePath(localEpisode.Episodes, localEpisode.Series, episodeFile, Path.GetExtension(localEpisode.Path), null, localEpisode.CustomFormats);
 
+            if (localEpisode.ResolvedImportDestinationPath != null)
+            {
+                MediaFileRecoveryPaths.VerifyResolvedPath(filePath, localEpisode.ResolvedImportDestinationPath);
+            }
+
             EnsureEpisodeFolder(episodeFile, localEpisode, filePath);
 
             _logger.Debug("Moving episode file: {0} to {1}", episodeFile.Path, filePath);
@@ -94,6 +99,11 @@ namespace NzbDrone.Core.MediaFiles
         public EpisodeFile CopyEpisodeFile(EpisodeFile episodeFile, LocalEpisode localEpisode)
         {
             var filePath = _buildFileNames.BuildFilePath(localEpisode.Episodes, localEpisode.Series, episodeFile, Path.GetExtension(localEpisode.Path), null, localEpisode.CustomFormats);
+
+            if (localEpisode.ResolvedImportDestinationPath != null)
+            {
+                MediaFileRecoveryPaths.VerifyResolvedPath(filePath, localEpisode.ResolvedImportDestinationPath);
+            }
 
             EnsureEpisodeFolder(episodeFile, localEpisode, filePath);
 
@@ -113,6 +123,11 @@ namespace NzbDrone.Core.MediaFiles
             Ensure.That(series, () => series).IsNotNull();
             Ensure.That(destinationFilePath, () => destinationFilePath).IsValidPath(PathValidationType.CurrentOs);
 
+            if (episodeFile.SeriesId != series.Id)
+            {
+                throw new InvalidOperationException("Episode file belongs to another series.");
+            }
+
             var episodeFilePath = episodeFile.Path ?? Path.Combine(series.Path, episodeFile.RelativePath);
 
             if (!_diskProvider.FileExists(episodeFilePath))
@@ -125,6 +140,11 @@ namespace NzbDrone.Core.MediaFiles
                 throw new SameFilenameException("File not moved, source and destination are the same", episodeFilePath);
             }
 
+            if (!episodeFilePath.PathEquals(destinationFilePath) && _diskProvider.FileExists(destinationFilePath))
+            {
+                throw new DestinationAlreadyExistsException("Destination is used by another episode version. Adjust the episode naming format before retrying.");
+            }
+
             episodeFile.RelativePath = series.Path.GetRelativePath(destinationFilePath);
 
             if (localEpisode is not null)
@@ -132,7 +152,7 @@ namespace NzbDrone.Core.MediaFiles
                 localEpisode.FileNameBeforeRename = episodeFile.RelativePath;
             }
 
-            if (localEpisode is not null && _scriptImportDecider.TryImport(episodeFilePath, destinationFilePath, localEpisode, episodeFile, mode) is var scriptImportDecision && scriptImportDecision != ScriptImportDecision.DeferMove)
+            if (localEpisode is not null && _scriptImportDecider.TryImport(localEpisode.Path, destinationFilePath, localEpisode, episodeFile, mode) is var scriptImportDecision && scriptImportDecision != ScriptImportDecision.DeferMove)
             {
                 if (scriptImportDecision == ScriptImportDecision.RenameRequested)
                 {
@@ -145,10 +165,18 @@ namespace NzbDrone.Core.MediaFiles
                         _logger.Debug("No rename was required. File already exists at destination.");
                     }
                 }
+
+                destinationFilePath = MediaFileRecoveryPaths.ValidateContainedPath(_diskProvider, series.Path, Path.Combine(series.Path, episodeFile.RelativePath), true);
             }
             else
             {
-                _diskTransferService.TransferFile(episodeFilePath, destinationFilePath, mode);
+                var transferDestination = localEpisode?.ResolvedImportDestinationPath ?? destinationFilePath;
+                if (localEpisode?.ResolvedImportDestinationPath != null)
+                {
+                    MediaFileRecoveryPaths.VerifyResolvedPath(destinationFilePath, transferDestination);
+                }
+
+                _diskTransferService.TransferFile(episodeFilePath, transferDestination, mode);
             }
 
             _updateEpisodeFileService.ChangeFileDateForFile(episodeFile, series, episodes);

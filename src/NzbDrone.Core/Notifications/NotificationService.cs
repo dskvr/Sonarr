@@ -186,7 +186,7 @@ namespace NzbDrone.Core.Notifications
                 {
                     if (ShouldHandleSeries(notification.Definition, message.EpisodeInfo.Series))
                     {
-                        if (downloadMessage.OldFiles.Empty() || ((NotificationDefinition)notification.Definition).OnUpgrade)
+                        if (!downloadMessage.IsUpgrade || ((NotificationDefinition)notification.Definition).OnUpgrade)
                         {
                             notification.OnDownload(downloadMessage);
                             _notificationStatusService.RecordSuccess(notification.Definition.Id);

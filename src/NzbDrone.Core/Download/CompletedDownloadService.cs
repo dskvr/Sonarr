@@ -6,6 +6,7 @@ using NLog;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
@@ -211,10 +212,19 @@ namespace NzbDrone.Core.Download
 
         public bool VerifyImport(TrackedDownload trackedDownload, List<ImportResult> importResults)
         {
-            var allEpisodesImported = importResults.Where(c => c.Result == ImportResultType.Imported)
-                                                   .SelectMany(c => c.ImportDecision.LocalEpisode.Episodes)
-                                                   .Count() >= Math.Max(1,
-                                          trackedDownload.RemoteEpisode.Episodes.Count);
+            var successful = importResults.Where(c => c.Result == ImportResultType.Imported).ToList();
+            var targets = trackedDownload.RemoteEpisode.TargetQualityTrackIds;
+            var allEpisodesImported = successful.SelectMany(c => c.ImportDecision.LocalEpisode.Episodes).Count() >=
+                Math.Max(1, trackedDownload.RemoteEpisode.Episodes.Count);
+
+            if (targets != null)
+            {
+                var imported = successful.SelectMany(result => result.ImportDecision.LocalEpisode.Episodes.SelectMany(episode =>
+                    (result.ImportDecision.LocalEpisode.TargetQualityTrackIds ?? QualityTrackSnapshot.LegacyTargets(result.ImportDecision.LocalEpisode.Series))
+                        .Select(trackId => (episode.Id, TrackId: trackId)))).ToHashSet();
+                allEpisodesImported = targets.Any() && trackedDownload.RemoteEpisode.Episodes.Any() &&
+                    trackedDownload.RemoteEpisode.Episodes.All(episode => targets.All(trackId => imported.Contains((episode.Id, trackId))));
+            }
 
             var historyItems = _historyService.FindByDownloadId(trackedDownload.DownloadItem.DownloadId)
                 .OrderByDescending(h => h.Date)
@@ -270,7 +280,10 @@ namespace NzbDrone.Core.Download
                 }
 
                 var episodes = _episodeService.GetEpisodes(trackedDownload.RemoteEpisode.Episodes.Select(e => e.Id));
-                var files = _mediaFileService.GetFiles(episodes.Select(e => e.EpisodeFileId).Where(i => i > 0).Distinct());
+                var fileIds = targets == null
+                    ? episodes.Select(e => e.EpisodeFileId)
+                    : episodes.SelectMany(e => e.TrackFiles?.Value ?? []).Where(l => targets.Contains(l.TrackId)).Select(l => l.EpisodeFileId);
+                var files = _mediaFileService.GetFiles(fileIds.Where(i => i > 0).Distinct());
 
                 trackedDownload.State = TrackedDownloadState.Imported;
                 _eventAggregator.PublishEvent(new DownloadCompletedEvent(trackedDownload, trackedDownload.RemoteEpisode.Series.Id, files, releaseInfo));

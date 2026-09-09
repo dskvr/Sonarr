@@ -1,4 +1,5 @@
-﻿using NLog;
+﻿using System.Linq;
+using NLog;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Download;
@@ -21,6 +22,13 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport.Specifications
 
         public ImportSpecDecision IsSatisfiedBy(LocalEpisode localEpisode, DownloadClientItem downloadClientItem)
         {
+            if (localEpisode.TargetQualityTrackIds is { Count: > 0 } && localEpisode.Series.QualityTracks?.Value?.Any(t =>
+                !t.IsPrimary && (t.Enabled || t.TrackFiles?.Value?.Any() == true)) == true)
+            {
+                // Track replacements retain multi-episode files while any association still needs them.
+                return ImportSpecDecision.Accept();
+            }
+
             if (_sameEpisodesSpecification.IsSatisfiedBy(localEpisode.Episodes))
             {
                 return ImportSpecDecision.Accept();

@@ -52,7 +52,9 @@ namespace NzbDrone.Core.Test.Datastore
                     .Excluding(c => c.DateAdded)
                     .Excluding(c => c.Path)
                     .Excluding(c => c.Series)
+                    .Excluding(c => c.TrackFiles)
                     .Excluding(c => c.Episodes));
+            loadedEpisodeFile.TrackFiles.Value.Should().BeEmpty();
         }
 
         [Test]

@@ -25,16 +25,19 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IDiskProvider _diskProvider;
         private readonly IConfigService _configService;
         private readonly IEpisodeService _episodeService;
+        private readonly IMediaFileService _mediaFileService;
         private readonly Logger _logger;
 
         public UpdateEpisodeFileService(IDiskProvider diskProvider,
                                         IConfigService configService,
                                         IEpisodeService episodeService,
+                                        IMediaFileService mediaFileService,
                                         Logger logger)
         {
             _diskProvider = diskProvider;
             _configService = configService;
             _episodeService = episodeService;
+            _mediaFileService = mediaFileService;
             _logger = logger;
         }
 
@@ -107,17 +110,16 @@ namespace NzbDrone.Core.MediaFiles
                 return;
             }
 
-            var episodes = _episodeService.EpisodesWithFiles(message.Series.Id);
-
-            var episodeFiles = new List<EpisodeFile>();
+            var episodeFiles = _mediaFileService.GetFilesBySeries(message.Series.Id);
             var updated = new List<EpisodeFile>();
 
-            foreach (var group in episodes.GroupBy(e => e.EpisodeFileId))
+            foreach (var episodeFile in episodeFiles)
             {
-                var episodesInFile = group.Select(e => e).ToList();
-                var episodeFile = episodesInFile.First().EpisodeFile;
-
-                episodeFiles.Add(episodeFile);
+                var episodesInFile = _episodeService.GetEpisodesByFileId(episodeFile.Id);
+                if (episodesInFile.Count == 0)
+                {
+                    continue;
+                }
 
                 if (ChangeFileDate(episodeFile, message.Series, episodesInFile))
                 {

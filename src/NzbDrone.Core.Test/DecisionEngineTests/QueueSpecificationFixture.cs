@@ -107,6 +107,38 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         }
 
         [Test]
+        public void should_not_suppress_another_quality_track()
+        {
+            var queued = new RemoteEpisode
+            {
+                Series = _series,
+                Episodes = [_episode],
+                ParsedEpisodeInfo = _remoteEpisode.ParsedEpisodeInfo,
+                TargetQualityTrackIds = [10]
+            };
+            _remoteEpisode.TargetQualityTrackIds = [20];
+            GivenQueue([queued]);
+
+            Subject.IsSatisfiedBy(_remoteEpisode, new()).Accepted.Should().BeTrue();
+        }
+
+        [Test]
+        public void should_suppress_matching_quality_track_in_shared_download()
+        {
+            var queued = new RemoteEpisode
+            {
+                Series = _series,
+                Episodes = [_episode],
+                ParsedEpisodeInfo = _remoteEpisode.ParsedEpisodeInfo,
+                TargetQualityTrackIds = [10, 20]
+            };
+            _remoteEpisode.TargetQualityTrackIds = [20];
+            GivenQueue([queued]);
+
+            Subject.IsSatisfiedBy(_remoteEpisode, new()).Accepted.Should().BeFalse();
+        }
+
+        [Test]
         public void should_return_true_when_queue_is_empty()
         {
             GivenEmptyQueue();

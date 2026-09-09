@@ -37,6 +37,8 @@ namespace NzbDrone.Core.Tv
         public bool Monitored { get; set; }
         public NewItemMonitorTypes MonitorNewItems { get; set; }
         public int QualityProfileId { get; set; }
+        public List<int> AdditionalQualityProfileIds { get; set; }
+        public LazyLoaded<List<SeriesQualityTrack>> QualityTracks { get; set; }
         public bool SeasonFolder { get; set; }
         public DateTime? LastInfoSync { get; set; }
         public int Runtime { get; set; }
@@ -74,6 +76,7 @@ namespace NzbDrone.Core.Tv
             Seasons = otherSeries.Seasons;
             Path = otherSeries.Path;
             QualityProfileId = otherSeries.QualityProfileId;
+            AdditionalQualityProfileIds = otherSeries.AdditionalQualityProfileIds;
 
             SeasonFolder = otherSeries.SeasonFolder;
             Monitored = otherSeries.Monitored;
@@ -83,6 +86,11 @@ namespace NzbDrone.Core.Tv
             RootFolderPath = otherSeries.RootFolderPath;
             Tags = otherSeries.Tags;
             AddOptions = otherSeries.AddOptions;
+        }
+
+        public Series Clone()
+        {
+            return (Series)MemberwiseClone();
         }
     }
 }

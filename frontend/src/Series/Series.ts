@@ -30,6 +30,7 @@ export interface Image {
 }
 
 export interface Statistics {
+  qualityTracks?: QualityTrackStatistics[];
   seasonCount: number;
   episodeCount: number;
   episodeFileCount: number;
@@ -41,6 +42,15 @@ export interface Statistics {
   sizeOnDisk: number;
   totalEpisodeCount: number;
   monitoredEpisodeCount: number;
+}
+
+export interface QualityTrackStatistics {
+  trackId: number;
+  qualityProfileId: number;
+  episodeCount: number;
+  episodeFileCount: number;
+  cutoffUnmetCount: number;
+  missingCount: number;
 }
 
 export interface Season {
@@ -68,6 +78,16 @@ export interface SeriesAddOptions {
   searchForCutoffUnmetEpisodes: boolean;
 }
 
+export interface SeriesQualityTrack {
+  id: number;
+  qualityProfileId: number;
+  isPrimary: boolean;
+  enabled: boolean;
+  episodeFileCount: number;
+}
+
+export type ApplyAdditionalQualityProfiles = 'add' | 'remove' | 'replace';
+
 interface Series extends ModelBase {
   added: string;
   alternateTitles: AlternateTitle[];
@@ -89,6 +109,8 @@ interface Series extends ModelBase {
   previousAiring?: string;
   nextAiring?: string;
   qualityProfileId: number;
+  additionalQualityProfileIds?: number[];
+  qualityTracks?: SeriesQualityTrack[];
   ratings: Ratings;
   rootFolderPath: string;
   runtime: number;

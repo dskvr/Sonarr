@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using FizzWare.NBuilder;
+using FluentAssertions;
 using Moq;
 using NUnit.Framework;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download.Pending;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
@@ -120,6 +122,51 @@ namespace NzbDrone.Core.Test.Download.Pending.PendingReleaseServiceTests
         private void InitializeReleases()
         {
             Subject.Handle(new ApplicationStartedEvent());
+        }
+
+        [Test]
+        public void should_store_independent_pending_target_intent()
+        {
+            _remoteEpisode.TargetQualityTrackIds = [10, 20];
+            var inserted = new List<PendingRelease>();
+            Mocker.GetMock<IPendingReleaseRepository>()
+                .Setup(r => r.Insert(It.IsAny<PendingRelease>())).Callback<PendingRelease>(inserted.Add);
+            InitializeReleases();
+
+            Subject.Add(_temporarilyRejected, PendingReleaseReason.Delay);
+
+            inserted.Should().HaveCount(2);
+            inserted.SelectMany(p => p.AdditionalInfo.TargetQualityTrackIds).Should().BeEquivalentTo([10, 20]);
+            inserted.Should().OnlyContain(p => p.AdditionalInfo.TargetQualityTrackIds.Count == 1);
+            _remoteEpisode.TargetQualityTrackIds.Should().Equal(10, 20);
+        }
+
+        [Test]
+        public void should_not_deduplicate_different_pending_targets()
+        {
+            GivenHeldRelease(_release.Title, _release.Indexer, _release.PublishDate);
+            _heldReleases[0].AdditionalInfo = new PendingReleaseAdditionalInfo { TargetQualityTrackIds = [10] };
+            _remoteEpisode.TargetQualityTrackIds = [20];
+            InitializeReleases();
+
+            Subject.Add(_temporarilyRejected, PendingReleaseReason.Delay);
+
+            VerifyInsert();
+        }
+
+        [Test]
+        public void should_restore_and_merge_pending_targets_for_one_release()
+        {
+            Mocker.GetMock<IIndexerStatusService>().Setup(s => s.GetBlockedProviders()).Returns(new List<IndexerStatus>());
+            GivenHeldRelease(_release.Title, _release.Indexer, _release.PublishDate);
+            GivenHeldRelease(_release.Title, _release.Indexer, _release.PublishDate);
+            _heldReleases[0].AdditionalInfo = new PendingReleaseAdditionalInfo { TargetQualityTrackIds = [10] };
+            _heldReleases[1].AdditionalInfo = new PendingReleaseAdditionalInfo { TargetQualityTrackIds = [20] };
+
+            var pending = Subject.GetPending();
+
+            pending.Should().ContainSingle().Which.TargetQualityTrackIds.Should().BeEquivalentTo([10, 20]);
+            _heldReleases[0].Release.TargetQualityTrackIds.Should().BeNull();
         }
 
         [Test]

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
@@ -117,6 +118,16 @@ namespace NzbDrone.Core.Download.History
             history.Data.Add("DownloadClient", message.DownloadClient);
             history.Data.Add("DownloadClientName", message.DownloadClientName);
             history.Data.Add("CustomFormatScore", message.Episode.CustomFormatScore.ToString());
+
+            if (message.Episode.TargetQualityTrackIds != null)
+            {
+                history.Data.Add("qualityTrackIds", STJson.ToJson(message.Episode.TargetQualityTrackIds));
+            }
+
+            if (message.Episode.TargetQualityTrackSignatures != null)
+            {
+                history.Data.Add("qualityTrackSignatures", STJson.ToJson(message.Episode.TargetQualityTrackSignatures));
+            }
 
             _repository.Insert(history);
         }

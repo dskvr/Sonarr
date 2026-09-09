@@ -137,7 +137,7 @@ namespace NzbDrone.Core.Notifications.Discord
         {
             var series = message.Series;
             var episodes = message.EpisodeFile.Episodes.Value;
-            var isUpgrade = message.OldFiles.Count > 0;
+            var isUpgrade = message.IsUpgrade;
 
             var embed = new Embed
             {

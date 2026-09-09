@@ -8,6 +8,8 @@ public class SeriesEditorResource
     public bool? Monitored { get; set; }
     public NewItemMonitorTypes? MonitorNewItems { get; set; }
     public int? QualityProfileId { get; set; }
+    public List<int>? AdditionalQualityProfileIds { get; set; }
+    public ApplyAdditionalQualityProfiles? ApplyAdditionalQualityProfiles { get; set; }
     public SeriesTypes? SeriesType { get; set; }
     public bool? SeasonFolder { get; set; }
     public string? RootFolderPath { get; set; }

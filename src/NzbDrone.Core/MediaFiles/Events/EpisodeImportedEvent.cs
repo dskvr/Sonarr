@@ -11,6 +11,7 @@ namespace NzbDrone.Core.MediaFiles.Events
         public EpisodeFile ImportedEpisode { get; private set; }
         public List<DeletedEpisodeFile> OldFiles { get; private set; }
         public bool NewDownload { get; private set; }
+        public bool IsUpgrade => EpisodeInfo.IsUpgrade || OldFiles.Count > 0;
         public DownloadClientItemClientInfo DownloadClientInfo { get; set; }
         public string DownloadId { get; private set; }
 

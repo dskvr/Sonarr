@@ -1,6 +1,7 @@
 using System.Linq;
 using NLog;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Messaging;
 using NzbDrone.Core.Messaging.Commands;
@@ -15,16 +16,19 @@ namespace NzbDrone.Core.Download
         private readonly IConfigService _configService;
         private readonly IEpisodeService _episodeService;
         private readonly IManageCommandQueue _commandQueueManager;
+        private readonly ISeriesQualityTrackService _qualityTrackService;
         private readonly Logger _logger;
 
         public RedownloadFailedDownloadService(IConfigService configService,
                                                IEpisodeService episodeService,
                                                IManageCommandQueue commandQueueManager,
+                                               ISeriesQualityTrackService qualityTrackService,
                                                Logger logger)
         {
             _configService = configService;
             _episodeService = episodeService;
             _commandQueueManager = commandQueueManager;
+            _qualityTrackService = qualityTrackService;
             _logger = logger;
         }
 
@@ -49,11 +53,25 @@ namespace NzbDrone.Core.Download
                 return;
             }
 
+            var targets = message.TrackedDownload?.RemoteEpisode?.TargetQualityTrackIds ?? QualityTrackSnapshot.ReadTargets(message.Data, "qualityTrackIds");
+
+            if (targets == null)
+            {
+                var primary = _qualityTrackService.GetTracks(message.SeriesId)?.SingleOrDefault(t => t.IsPrimary);
+                targets = primary == null ? null : [primary.Id];
+            }
+
+            if (targets?.Count == 0)
+            {
+                _logger.Debug("Saved quality profile targets are invalid, skipping automatic retry");
+                return;
+            }
+
             if (message.EpisodeIds.Count == 1)
             {
                 _logger.Debug("Failed download only contains one episode, searching again");
 
-                _commandQueueManager.Push(new EpisodeSearchCommand(message.EpisodeIds));
+                _commandQueueManager.Push(new EpisodeSearchCommand(message.EpisodeIds) { TargetQualityTrackIds = targets });
 
                 return;
             }
@@ -68,7 +86,8 @@ namespace NzbDrone.Core.Download
                 _commandQueueManager.Push(new SeasonSearchCommand
                 {
                     SeriesId = message.SeriesId,
-                    SeasonNumber = seasonNumber
+                    SeasonNumber = seasonNumber,
+                    TargetQualityTrackIds = targets
                 });
 
                 return;
@@ -76,7 +95,7 @@ namespace NzbDrone.Core.Download
 
             _logger.Debug("Failed download contains multiple episodes, probably a double episode, searching again");
 
-            _commandQueueManager.Push(new EpisodeSearchCommand(message.EpisodeIds));
+            _commandQueueManager.Push(new EpisodeSearchCommand(message.EpisodeIds) { TargetQualityTrackIds = targets });
         }
     }
 }

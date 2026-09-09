@@ -28,6 +28,8 @@ public class SeriesResource : RestResource
     public int Year { get; set; }
     public string? Path { get; set; }
     public int QualityProfileId { get; set; }
+    public List<int>? AdditionalQualityProfileIds { get; set; }
+    public List<SeriesQualityTrackResource> QualityTracks { get; set; } = [];
     public bool SeasonFolder { get; set; }
     public bool Monitored { get; set; }
     public NewItemMonitorTypes MonitorNewItems { get; set; }
@@ -81,6 +83,8 @@ public static class SeriesResourceMapper
             OriginalLanguage = model.OriginalLanguage,
             Path = model.Path,
             QualityProfileId = model.QualityProfileId,
+            AdditionalQualityProfileIds = model.QualityTracks?.Value?.Where(t => t.Enabled && !t.IsPrimary).Select(t => t.QualityProfileId).ToList() ?? [],
+            QualityTracks = model.QualityTracks?.Value?.Select(t => t.ToResource()).ToList() ?? [],
             SeasonFolder = model.SeasonFolder,
             Monitored = model.Monitored,
             MonitorNewItems = model.MonitorNewItems,
@@ -124,6 +128,7 @@ public static class SeriesResourceMapper
             OriginalLanguage = resource.OriginalLanguage,
             Path = resource.Path,
             QualityProfileId = resource.QualityProfileId,
+            AdditionalQualityProfileIds = resource.AdditionalQualityProfileIds,
             SeasonFolder = resource.SeasonFolder,
             Monitored = resource.Monitored,
             MonitorNewItems = resource.MonitorNewItems,

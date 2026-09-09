@@ -1,10 +1,13 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using FizzWare.NBuilder;
 using FluentAssertions;
+using FluentValidation;
 using Moq;
 using NUnit.Framework;
 using NzbDrone.Core.AutoTagging;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Test.Framework;
 using NzbDrone.Core.Tv;
 
@@ -100,6 +103,57 @@ namespace NzbDrone.Core.Test.TvTests.SeriesServiceTests
             var result = Subject.UpdateSeries(_fakeSeries);
 
             result.Tags.Should().BeEquivalentTo(new[] { 2, 3 });
+        }
+
+        [Test]
+        public void should_reject_invalid_profiles_before_changing_episode_monitoring()
+        {
+            GivenExistingSeries();
+            _fakeSeries.Seasons[0].Monitored = false;
+            Mocker.GetMock<ISeriesQualityTrackService>()
+                .Setup(s => s.ValidateProfiles(_fakeSeries.Id, _fakeSeries.QualityProfileId, _fakeSeries.AdditionalQualityProfileIds))
+                .Throws(new ValidationException("Invalid quality profile"));
+
+            Assert.Throws<ValidationException>(() => Subject.UpdateSeries(_fakeSeries));
+
+            Mocker.GetMock<IEpisodeService>().Verify(s => s.SetEpisodeMonitoredBySeason(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()), Times.Never());
+            Mocker.GetMock<ISeriesRepository>().Verify(s => s.Update(It.IsAny<Series>()), Times.Never());
+        }
+
+        [Test]
+        public void should_preserve_current_path_and_profiles_during_metadata_update()
+        {
+            GivenExistingSeries();
+            _existingSeries.Path = "/library/moved";
+            _existingSeries.QualityProfileId = 8;
+            _fakeSeries.Path = "/library/previous";
+            _fakeSeries.RootFolderPath = "/library/previous-root";
+            _fakeSeries.QualityProfileId = 1;
+            _fakeSeries.AdditionalQualityProfileIds = new List<int> { 2 };
+            _fakeSeries.Tags = new HashSet<int> { 9 };
+            _fakeSeries.Seasons[0].Monitored = false;
+
+            var result = Subject.UpdateSeriesMetadata(_fakeSeries);
+
+            result.Path.Should().Be(_existingSeries.Path);
+            result.QualityProfileId.Should().Be(8);
+            result.AdditionalQualityProfileIds.Should().BeNull();
+            result.RootFolderPath.Should().BeNull();
+            result.Tags.Should().BeEquivalentTo(new[] { 9 });
+            Mocker.GetMock<IEpisodeService>().Verify(s => s.SetEpisodeMonitoredBySeason(_fakeSeries.Id, 1, false), Times.Once());
+        }
+
+        [Test]
+        public void should_not_take_unrelated_series_locks_for_metadata_updates()
+        {
+            GivenExistingSeries();
+            var service = Subject;
+            lock (MediaFileOperationLock.ForSeries(47))
+            {
+                var update = Task.Run(() => service.UpdateSeriesMetadata(_fakeSeries));
+                update.Wait(System.TimeSpan.FromSeconds(5)).Should().BeTrue();
+                update.GetAwaiter().GetResult().Path.Should().Be(_existingSeries.Path);
+            }
         }
     }
 }

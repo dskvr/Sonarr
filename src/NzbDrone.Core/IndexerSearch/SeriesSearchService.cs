@@ -3,6 +3,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Tv;
@@ -43,7 +44,7 @@ namespace NzbDrone.Core.IndexerSearch
 
                 var episodes = _episodeService.GetEpisodeBySeries(series.Id)
                     .Where(e => e.Monitored &&
-                                !e.HasFile &&
+                                QualityTrackSnapshot.IsMissing(e, series) &&
                                 e.AirDateUtc.HasValue &&
                                 e.AirDateUtc.Value.Before(DateTime.UtcNow))
                     .ToList();
@@ -65,7 +66,7 @@ namespace NzbDrone.Core.IndexerSearch
                         continue;
                     }
 
-                    var decisions = _releaseSearchService.SeasonSearch(message.SeriesId, season.SeasonNumber, !profile.UpgradeAllowed, true, userInvokedSearch, false).GetAwaiter().GetResult();
+                    var decisions = _releaseSearchService.SeasonSearch(message.SeriesId, season.SeasonNumber, !(series.QualityTracks?.Value?.Where(t => t.Enabled).Any(t => t.QualityProfile.Value.UpgradeAllowed) ?? profile.UpgradeAllowed), true, userInvokedSearch, false).GetAwaiter().GetResult();
                     var processDecisions = _processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
                     downloadedCount += processDecisions.Grabbed.Count;
                 }

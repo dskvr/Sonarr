@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using NLog;
 using NzbDrone.Common.Disk;
+using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
@@ -40,8 +41,9 @@ namespace NzbDrone.Core.Extras.Metadata
                                IHttpClient httpClient,
                                IMediaFileAttributeService mediaFileAttributeService,
                                IMetadataFileService metadataFileService,
+                               IAppFolderInfo appFolderInfo,
                                Logger logger)
-            : base(configService, diskProvider, diskTransferService, logger)
+            : base(configService, diskProvider, diskTransferService, metadataFileService, appFolderInfo, logger)
         {
             _metadataFactory = metadataFactory;
             _cleanMetadataService = cleanMetadataService;
@@ -187,13 +189,13 @@ namespace NzbDrone.Core.Extras.Metadata
             return files;
         }
 
-        public override IEnumerable<ExtraFile> MoveFilesAfterRename(Series series, List<EpisodeFile> episodeFiles)
+        public override IEnumerable<ExtraFile> MoveFilesAfterRename(Series series, List<EpisodeFile> episodeFiles, bool requireSuccess = false)
         {
-            var metadataFiles = _metadataFileService.GetFilesBySeries(series.Id);
+            var metadataFiles = episodeFiles.Count == 1
+                ? _metadataFileService.GetFilesByEpisodeFile(episodeFiles[0].Id)
+                : _metadataFileService.GetFilesBySeries(series.Id);
             var movedFiles = new List<MetadataFile>();
-
-            // TODO: Move EpisodeImage and EpisodeMetadata metadata files, instead of relying on consumers to do it
-            // (Xbmc's EpisodeImage is more than just the extension)
+            var failures = requireSuccess ? new List<Exception>() : null;
 
             foreach (var consumer in _metadataFactory.GetAvailableProviders())
             {
@@ -203,27 +205,35 @@ namespace NzbDrone.Core.Extras.Metadata
 
                     foreach (var metadataFile in metadataFilesForConsumer)
                     {
-                        var newFileName = consumer.GetFilenameAfterMove(series, episodeFile, metadataFile);
-                        var existingFileName = Path.Combine(series.Path, metadataFile.RelativePath);
-
-                        if (newFileName.PathNotEquals(existingFileName))
+                        try
                         {
-                            try
+                            var newFileName = consumer.GetFilenameAfterMove(series, episodeFile, metadataFile);
+                            movedFiles.AddIfNotNull(MoveFileTo(series, episodeFile, metadataFile, newFileName, failures));
+                        }
+                        catch (Exception ex)
+                        {
+                            if (requireSuccess)
                             {
-                                _diskProvider.MoveFile(existingFileName, newFileName);
-                                metadataFile.RelativePath = series.Path.GetRelativePath(newFileName);
-                                movedFiles.Add(metadataFile);
+                                failures.Add(ex);
                             }
-                            catch (Exception ex)
+                            else
                             {
-                                _logger.Warn(ex, "Unable to move metadata file after rename: {0}", existingFileName);
+                                _logger.Warn(ex, "Unable to move metadata file after rename: {0}", metadataFile.RelativePath);
                             }
                         }
                     }
                 }
             }
 
-            _metadataFileService.Upsert(movedFiles);
+            if (!requireSuccess)
+            {
+                _metadataFileService.Upsert(movedFiles);
+            }
+
+            if (failures?.Count > 0)
+            {
+                throw new AggregateException("Metadata files could not be moved after rename.", failures);
+            }
 
             return movedFiles;
         }
@@ -297,7 +307,14 @@ namespace NzbDrone.Core.Extras.Metadata
 
             var fullPath = Path.Combine(series.Path, episodeMetadata.RelativePath);
 
-            _otherExtraFileRenamer.RenameOtherExtraFile(series, fullPath);
+            var destinationMetadata = _metadataFileService.FindByPath(series.Id, episodeMetadata.RelativePath);
+            if (destinationMetadata != null && destinationMetadata.EpisodeFileId != episodeFile.Id)
+            {
+                throw new IOException("Metadata destination belongs to another episode file: " + fullPath);
+            }
+
+            _otherExtraFileRenamer.RenameOtherExtraFile(series, fullPath, episodeFile.Id);
+            EnsureDestinationAvailable(series, episodeFile, fullPath);
 
             var existingMetadata = GetMetadataFile(series, existingMetadataFiles, c => c.Type == MetadataType.EpisodeMetadata &&
                                                                                   c.EpisodeFileId == episodeFile.Id);
@@ -428,7 +445,8 @@ namespace NzbDrone.Core.Extras.Metadata
                     continue;
                 }
 
-                _otherExtraFileRenamer.RenameOtherExtraFile(series, fullPath);
+                EnsureDestinationAvailable(series, episodeFile, fullPath);
+                _otherExtraFileRenamer.RenameOtherExtraFile(series, fullPath, episodeFile.Id);
 
                 var existingMetadata = GetMetadataFile(series, existingMetadataFiles, c => c.Type == MetadataType.EpisodeImage &&
                                                                                       c.EpisodeFileId == episodeFile.Id);

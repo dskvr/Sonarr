@@ -29,8 +29,11 @@ import SelectSeriesModal from 'InteractiveImport/Series/SelectSeriesModal';
 import { useUpdateInteractiveImportItem } from 'InteractiveImport/useInteractiveImport';
 import Language from 'Language/Language';
 import { QualityModel } from 'Quality/Quality';
+import QualityTrackSelect from 'Series/QualityProfiles/QualityTrackSelect';
+import { getImportQualityTrackTargets } from 'Series/QualityProfiles/qualityTrackState';
 import Series from 'Series/Series';
 import { CustomFormat } from 'Settings/CustomFormats/CustomFormats/useCustomFormats';
+import { InputChanged } from 'typings/inputs';
 import { SelectStateInputProps } from 'typings/props';
 import Rejection from 'typings/Rejection';
 import formatBytes from 'Utilities/Number/formatBytes';
@@ -71,6 +74,7 @@ interface InteractiveImportRowProps {
   rejections: Rejection[];
   columns: Column[];
   episodeFileId?: number;
+  targetQualityTrackIds?: number[];
   isReprocessing?: boolean;
   modalTitle: string;
   onReprocessItems: (ids: number[]) => void;
@@ -98,6 +102,7 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
     isReprocessing,
     modalTitle,
     episodeFileId,
+    targetQualityTrackIds,
     columns,
     onReprocessItems,
     onSelectedChange,
@@ -107,6 +112,17 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
   const { useIsSelected } = useSelect<InteractiveImport>();
   const isSelected = useIsSelected(id);
   const { updateInteractiveImportItem } = useUpdateInteractiveImportItem();
+
+  const showTargets =
+    (series?.qualityTracks?.filter((track) => track.enabled).length ?? 0) > 1;
+  const targets = useMemo(
+    () =>
+      getImportQualityTrackTargets(
+        series?.qualityTracks,
+        targetQualityTrackIds
+      ),
+    [series?.qualityTracks, targetQualityTrackIds]
+  );
 
   const isSeriesColumnVisible = useMemo(
     () => columns.find((c) => c.name === 'series')?.isVisible ?? false,
@@ -150,7 +166,8 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
       seasonNumber != null &&
       episodes.length &&
       quality &&
-      languages
+      languages &&
+      (!showTargets || targets?.length)
     );
 
     if (isSelected && !isValid) {
@@ -165,6 +182,8 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
     episodes,
     quality,
     languages,
+    showTargets,
+    targets,
     isSelected,
     onValidRowChange,
   ]);
@@ -190,6 +209,17 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
     }
   }, [id, episodeFileId, isSelected, onSelectedChange]);
 
+  const handleTargetsChange = useCallback(
+    ({ value }: InputChanged<number | number[]>) => {
+      updateInteractiveImportItem(id, {
+        targetQualityTrackIds: value as number[],
+      });
+      onReprocessItems([id]);
+      selectRowAfterChange();
+    },
+    [id, updateInteractiveImportItem, onReprocessItems, selectRowAfterChange]
+  );
+
   const onSelectModalClose = useCallback(() => {
     setSelectModalOpen(null);
   }, [setSelectModalOpen]);
@@ -202,6 +232,8 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
     (series: Series) => {
       updateInteractiveImportItem(id, {
         series,
+        targetQualityTrackIds: undefined,
+        resetQualityTrackTargets: true,
         seasonNumber: undefined,
         episodes: [],
       });
@@ -408,6 +440,13 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
 
       <TableRowCell className={styles.relativePath} title={relativePath}>
         {relativePath}
+        {showTargets && series?.qualityTracks ? (
+          <QualityTrackSelect
+            tracks={series.qualityTracks}
+            value={targets ?? []}
+            onChange={handleTargetsChange}
+          />
+        ) : null}
       </TableRowCell>
 
       {isSeriesColumnVisible ? (

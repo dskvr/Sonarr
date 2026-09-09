@@ -15,6 +15,9 @@ import EpisodeQuality from 'Episode/EpisodeQuality';
 import { icons, kinds, tooltipPositions } from 'Helpers/Props';
 import Language from 'Language/Language';
 import { QualityModel } from 'Quality/Quality';
+import QualityTrackNames from 'Series/QualityProfiles/QualityTrackNames';
+import { getHistoryQualityTrackIds } from 'Series/QualityProfiles/qualityTrackState';
+import { useSingleSeries } from 'Series/useSeries';
 import { CustomFormat } from 'Settings/CustomFormats/CustomFormats/useCustomFormats';
 import { HistoryData, HistoryEventType } from 'typings/History';
 import formatCustomFormatScore from 'Utilities/Number/formatCustomFormatScore';
@@ -41,6 +44,7 @@ function getTitle(eventType: HistoryEventType) {
 }
 
 interface EpisodeHistoryRowProps {
+  seriesId?: number;
   id: number;
   eventType: HistoryEventType;
   sourceTitle: string;
@@ -55,6 +59,7 @@ interface EpisodeHistoryRowProps {
 }
 
 function EpisodeHistoryRow({
+  seriesId,
   id,
   eventType,
   sourceTitle,
@@ -67,6 +72,7 @@ function EpisodeHistoryRow({
   data,
   downloadId,
 }: EpisodeHistoryRowProps) {
+  const series = useSingleSeries(seriesId);
   const [isMarkAsFailedModalOpen, setIsMarkAsFailedModalOpen] = useState(false);
   const { markAsFailed } = useMarkAsFailed(id, 'episode');
 
@@ -87,7 +93,15 @@ function EpisodeHistoryRow({
     <TableRow>
       <HistoryEventTypeCell eventType={eventType} data={data} />
 
-      <TableRowCell>{sourceTitle}</TableRowCell>
+      <TableRowCell>
+        {sourceTitle}
+        {series ? (
+          <QualityTrackNames
+            series={series}
+            trackIds={getHistoryQualityTrackIds(data)}
+          />
+        ) : null}
+      </TableRowCell>
 
       <TableRowCell>
         <EpisodeLanguages languages={languages} />

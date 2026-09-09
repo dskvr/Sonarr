@@ -87,7 +87,7 @@ namespace NzbDrone.Core.DataAugmentation.Xem
 
                 _episodeService.UpdateEpisodes(episodes);
                 series.UseSceneNumbering = mappings.Any();
-                _seriesService.UpdateSeries(series);
+                _seriesService.UpdateSeriesMetadata(series);
 
                 _logger.Debug("XEM mapping updated for {0}", series);
             }

@@ -1,8 +1,12 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using FluentValidation;
+using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.AutoTagging;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Tv.Events;
@@ -31,6 +35,8 @@ namespace NzbDrone.Core.Tv
         Dictionary<int, int> GetAllSeriesQualityProfiles();
         Series UpdateSeries(Series series, bool updateEpisodesToMatchSeason = true, bool publishUpdatedEvent = true);
         List<Series> UpdateSeries(List<Series> series, bool useExistingRelativeFolder);
+        Series UpdateSeriesMetadata(Series series, bool updateEpisodesToMatchSeason = true, bool publishUpdatedEvent = true);
+        List<Series> UpdateSeriesMetadata(List<Series> series, bool useExistingRelativeFolder);
         bool SeriesPathExists(string folder);
         void RemoveAddOptions(Series series);
         bool UpdateAutoTaggingTags(Series series);
@@ -44,6 +50,8 @@ namespace NzbDrone.Core.Tv
         private readonly IEpisodeService _episodeService;
         private readonly IBuildSeriesPaths _seriesPathBuilder;
         private readonly IAutoTaggingService _autoTaggingService;
+        private readonly ISeriesQualityTrackService _qualityTrackService;
+        private readonly ISeriesFolderMoveService _folderMoveService;
         private readonly Logger _logger;
 
         public SeriesService(ISeriesRepository seriesRepository,
@@ -51,6 +59,8 @@ namespace NzbDrone.Core.Tv
                              IEpisodeService episodeService,
                              IBuildSeriesPaths seriesPathBuilder,
                              IAutoTaggingService autoTaggingService,
+                             ISeriesQualityTrackService qualityTrackService,
+                             ISeriesFolderMoveService folderMoveService,
                              Logger logger)
         {
             _seriesRepository = seriesRepository;
@@ -58,6 +68,8 @@ namespace NzbDrone.Core.Tv
             _episodeService = episodeService;
             _seriesPathBuilder = seriesPathBuilder;
             _autoTaggingService = autoTaggingService;
+            _qualityTrackService = qualityTrackService;
+            _folderMoveService = folderMoveService;
             _logger = logger;
         }
 
@@ -73,6 +85,8 @@ namespace NzbDrone.Core.Tv
 
         public Series AddSeries(Series newSeries)
         {
+            using var operationLock = MediaFileOperationLock.AcquireAll();
+            _folderMoveService.RecoverPending(Array.Empty<int>(), new[] { newSeries.Path });
             _seriesRepository.Insert(newSeries);
             _eventAggregator.PublishEvent(new SeriesAddedEvent(GetSeries(newSeries.Id)));
 
@@ -81,6 +95,8 @@ namespace NzbDrone.Core.Tv
 
         public List<Series> AddSeries(List<Series> newSeries)
         {
+            using var operationLock = MediaFileOperationLock.AcquireAll();
+            _folderMoveService.RecoverPending(Array.Empty<int>(), newSeries.Select(s => s.Path));
             _seriesRepository.InsertMany(newSeries);
             _eventAggregator.PublishEvent(new SeriesImportedEvent(newSeries.Select(s => s.Id).ToList()));
 
@@ -163,6 +179,8 @@ namespace NzbDrone.Core.Tv
 
         public void DeleteSeries(List<int> seriesIds, bool deleteFiles, bool addImportListExclusion)
         {
+            using var operationLock = MediaFileOperationLock.AcquireAll();
+            _folderMoveService.RecoverPending(seriesIds, Array.Empty<string>());
             var series = _seriesRepository.Get(seriesIds).ToList();
             _seriesRepository.DeleteMany(seriesIds);
             _eventAggregator.PublishEvent(new SeriesDeletedEvent(series, deleteFiles, addImportListExclusion));
@@ -203,7 +221,13 @@ namespace NzbDrone.Core.Tv
         // TODO: Remove when seasons are split from series (or we come up with a better way to address this)
         public Series UpdateSeries(Series series, bool updateEpisodesToMatchSeason = true, bool publishUpdatedEvent = true)
         {
+            using var operationLock = AcquireUpdateLock(new[] { series });
+            _qualityTrackService.ValidateProfiles(series.Id, series.QualityProfileId, series.AdditionalQualityProfileIds);
             var storedSeries = GetSeries(series.Id);
+            if (!series.Path.PathEquals(storedSeries.Path) && _seriesRepository.HasPathConflict(series.Id, series.Path))
+            {
+                throw new ValidationException(new[] { new ValidationFailure("Path", "Another series already uses this folder or an overlapping folder.") });
+            }
 
             var episodeMonitoredChanged = false;
 
@@ -256,11 +280,72 @@ namespace NzbDrone.Core.Tv
                 UpdateAutoTaggingTags(s);
             }
 
+            using var operationLock = AcquireUpdateLock(series);
             _seriesRepository.UpdateMany(series);
             _logger.Debug("{0} series updated", series.Count);
             _eventAggregator.PublishEvent(new SeriesBulkEditedEvent(series));
 
             return series;
+        }
+
+        private IDisposable AcquireUpdateLock(IList<Series> models)
+        {
+            while (true)
+            {
+                var pathChanged = models.Any(s => !s.Path.PathEquals(_seriesRepository.Get(s.Id).Path));
+                var scope = pathChanged ? MediaFileOperationLock.AcquireAll() : MediaFileOperationLock.Acquire(models.Select(s => s.Id));
+                try
+                {
+                    if (pathChanged)
+                    {
+                        _folderMoveService.RecoverPending(models.Select(s => s.Id), models.Select(s => s.Path));
+                        return scope;
+                    }
+
+                    if (models.All(s => s.Path.PathEquals(_seriesRepository.Get(s.Id).Path)))
+                    {
+                        return scope;
+                    }
+                }
+                catch
+                {
+                    scope.Dispose();
+                    throw;
+                }
+
+                scope.Dispose();
+            }
+        }
+
+        public Series UpdateSeriesMetadata(Series series, bool updateEpisodesToMatchSeason = true, bool publishUpdatedEvent = true)
+        {
+            using var operationLock = MediaFileOperationLock.Acquire(new[] { series.Id });
+            PreserveCurrentConfiguration(series);
+            return UpdateSeries(series, updateEpisodesToMatchSeason, publishUpdatedEvent);
+        }
+
+        public List<Series> UpdateSeriesMetadata(List<Series> series, bool useExistingRelativeFolder)
+        {
+            using var operationLock = MediaFileOperationLock.Acquire(series.Select(s => s.Id));
+            foreach (var model in series)
+            {
+                PreserveCurrentConfiguration(model);
+            }
+
+            return UpdateSeries(series, useExistingRelativeFolder);
+        }
+
+        private void PreserveCurrentConfiguration(Series series)
+        {
+            var current = _seriesRepository.Get(series.Id);
+
+            // Metadata refresh, monitoring and list cleanup do not edit paths or quality selections.
+            series.Path = current.Path;
+            series.RootFolderPath = null;
+            series.QualityProfileId = current.QualityProfileId;
+            series.QualityProfile = current.QualityProfile;
+            series.QualityTracks = current.QualityTracks;
+            series.AdditionalQualityProfileIds = null;
         }
 
         public bool SeriesPathExists(string folder)

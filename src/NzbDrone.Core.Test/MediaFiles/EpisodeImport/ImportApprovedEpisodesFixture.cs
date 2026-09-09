@@ -8,6 +8,7 @@ using NUnit.Framework;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Extras;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.EpisodeImport;
@@ -68,6 +69,14 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
             Mocker.GetMock<IUpgradeMediaFiles>()
                   .Setup(s => s.UpgradeEpisodeFile(It.IsAny<EpisodeFile>(), It.IsAny<LocalEpisode>(), It.IsAny<bool>()))
                   .Returns(new EpisodeFileMoveResult());
+
+            Mocker.GetMock<ISeriesQualityTrackService>()
+                .Setup(s => s.GetEnabledTracks(It.IsAny<int>()))
+                .Returns(new List<SeriesQualityTrack> { new SeriesQualityTrack { Id = 1, IsPrimary = true, Enabled = true } });
+
+            Mocker.GetMock<IEpisodeTrackFileService>()
+                .Setup(s => s.GetForFile(It.IsAny<int>()))
+                .Returns(new List<EpisodeTrackFile>());
 
             Mocker.GetMock<IHistoryService>()
                 .Setup(x => x.FindByDownloadId(It.IsAny<string>()))
@@ -143,6 +152,72 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
             Mocker.GetMock<IUpgradeMediaFiles>()
                   .Verify(v => v.UpgradeEpisodeFile(It.IsAny<EpisodeFile>(), _approvedDecisions.First().LocalEpisode, false),
                           Times.Once());
+        }
+
+        [Test]
+        public void should_import_same_episode_for_distinct_tracks()
+        {
+            GivenExistingFileOnDisk();
+            var first = _approvedDecisions.First();
+            first.LocalEpisode.TargetQualityTrackIds = [1];
+            var secondEpisode = first.LocalEpisode.Clone();
+            secondEpisode.Path += ".second.avi";
+            secondEpisode.TargetQualityTrackIds = [2];
+
+            var results = Subject.Import([first, new ImportDecision(secondEpisode)], false);
+
+            results.Should().HaveCount(2).And.OnlyContain(r => r.Result == ImportResultType.Imported);
+            Mocker.GetMock<IEpisodeTrackFileService>().Verify(s => s.ImportFile(It.IsAny<EpisodeFile>(), It.Is<List<EpisodeTrackFile>>(l => l.Single().TrackId == 1)), Times.Once());
+            Mocker.GetMock<IEpisodeTrackFileService>().Verify(s => s.ImportFile(It.IsAny<EpisodeFile>(), It.Is<List<EpisodeTrackFile>>(l => l.Single().TrackId == 2)), Times.Once());
+        }
+
+        [Test]
+        public void should_keep_unfulfilled_target_when_another_target_was_imported()
+        {
+            GivenExistingFileOnDisk();
+            var first = _approvedDecisions.First();
+            first.LocalEpisode.TargetQualityTrackIds = [1];
+            first.LocalEpisode.Size = 100;
+            var secondEpisode = first.LocalEpisode.Clone();
+            secondEpisode.Size = 50;
+            secondEpisode.TargetQualityTrackIds = [1, 2];
+
+            var results = Subject.Import([first, new ImportDecision(secondEpisode)], false);
+
+            results.Should().OnlyContain(r => r.Result == ImportResultType.Imported);
+            secondEpisode.TargetQualityTrackIds.Should().Equal(2);
+        }
+
+        [Test]
+        public void should_not_suppress_retry_after_failed_import()
+        {
+            GivenExistingFileOnDisk();
+            var first = _approvedDecisions.First();
+            first.LocalEpisode.Size = 100;
+            var secondEpisode = first.LocalEpisode.Clone();
+            secondEpisode.Size = 50;
+            Mocker.GetMock<IEpisodeTrackFileService>()
+                .SetupSequence(s => s.ImportFile(It.IsAny<EpisodeFile>(), It.IsAny<List<EpisodeTrackFile>>()))
+                .Throws(new IOException("Database unavailable"))
+                .Returns(new List<int>());
+
+            var results = Subject.Import([first, new ImportDecision(secondEpisode)], false);
+
+            results.Should().ContainSingle(r => r.Result == ImportResultType.Imported);
+            ExceptionVerification.ExpectedWarns(1);
+        }
+
+        [Test]
+        public void should_not_insert_file_twice_after_upgrade_transaction()
+        {
+            Mocker.GetMock<IUpgradeMediaFiles>()
+                .Setup(s => s.UpgradeEpisodeFile(It.IsAny<EpisodeFile>(), It.IsAny<LocalEpisode>(), It.IsAny<bool>()))
+                .Returns(new EpisodeFileMoveResult());
+
+            Subject.Import([_approvedDecisions.First()], true).Should().ContainSingle(r => r.Result == ImportResultType.Imported);
+
+            Mocker.GetMock<IMediaFileService>().Verify(s => s.Add(It.IsAny<EpisodeFile>()), Times.Never());
+            Mocker.GetMock<IEventAggregator>().Verify(s => s.PublishEvent(It.IsAny<EpisodeFileAddedEvent>()), Times.Once());
         }
 
         [Test]
@@ -232,7 +307,7 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
 
             Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, true, _downloadClientItem);
 
-            Mocker.GetMock<IMediaFileService>().Verify(v => v.Add(It.Is<EpisodeFile>(c => c.OriginalFilePath == fileName)));
+            Mocker.GetMock<IUpgradeMediaFiles>().Verify(v => v.UpgradeEpisodeFile(It.Is<EpisodeFile>(c => c.OriginalFilePath == fileName), It.IsAny<LocalEpisode>(), It.IsAny<bool>()));
         }
 
         [Test]
@@ -246,7 +321,7 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
 
             Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, true, _downloadClientItem);
 
-            Mocker.GetMock<IMediaFileService>().Verify(v => v.Add(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}\\{name}.mkv".AsOsAgnostic())));
+            Mocker.GetMock<IUpgradeMediaFiles>().Verify(v => v.UpgradeEpisodeFile(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}\\{name}.mkv".AsOsAgnostic()), It.IsAny<LocalEpisode>(), It.IsAny<bool>()));
         }
 
         [Test]
@@ -260,7 +335,7 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
 
             Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, true, _downloadClientItem);
 
-            Mocker.GetMock<IMediaFileService>().Verify(v => v.Add(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}\\subfolder\\{name}.mkv".AsOsAgnostic())));
+            Mocker.GetMock<IUpgradeMediaFiles>().Verify(v => v.UpgradeEpisodeFile(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}\\subfolder\\{name}.mkv".AsOsAgnostic()), It.IsAny<LocalEpisode>(), It.IsAny<bool>()));
         }
 
         [Test]
@@ -275,7 +350,7 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
 
             Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, true, null);
 
-            Mocker.GetMock<IMediaFileService>().Verify(v => v.Add(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}\\subfolder\\{name}.mkv".AsOsAgnostic())));
+            Mocker.GetMock<IUpgradeMediaFiles>().Verify(v => v.UpgradeEpisodeFile(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}\\subfolder\\{name}.mkv".AsOsAgnostic()), It.IsAny<LocalEpisode>(), It.IsAny<bool>()));
         }
 
         [Test]
@@ -292,7 +367,7 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
 
             Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, true, null);
 
-            Mocker.GetMock<IMediaFileService>().Verify(v => v.Add(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}.mkv".AsOsAgnostic())));
+            Mocker.GetMock<IUpgradeMediaFiles>().Verify(v => v.UpgradeEpisodeFile(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}.mkv".AsOsAgnostic()), It.IsAny<LocalEpisode>(), It.IsAny<bool>()));
         }
 
         [Test]
@@ -309,7 +384,7 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
 
             Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, true, null);
 
-            Mocker.GetMock<IMediaFileService>().Verify(v => v.Add(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}.mkv".AsOsAgnostic())));
+            Mocker.GetMock<IUpgradeMediaFiles>().Verify(v => v.UpgradeEpisodeFile(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}.mkv".AsOsAgnostic()), It.IsAny<LocalEpisode>(), It.IsAny<bool>()));
         }
 
         [Test]
@@ -326,7 +401,7 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
 
             Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, true, null);
 
-            Mocker.GetMock<IMediaFileService>().Verify(v => v.Add(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}.mkv")));
+            Mocker.GetMock<IUpgradeMediaFiles>().Verify(v => v.UpgradeEpisodeFile(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}.mkv"), It.IsAny<LocalEpisode>(), It.IsAny<bool>()));
         }
 
         [Test]
@@ -342,11 +417,11 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
 
             Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, true, _downloadClientItem);
 
-            Mocker.GetMock<IMediaFileService>().Verify(v => v.Add(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}\\subfolder\\{name}.mkv".AsOsAgnostic())));
+            Mocker.GetMock<IUpgradeMediaFiles>().Verify(v => v.UpgradeEpisodeFile(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}\\subfolder\\{name}.mkv".AsOsAgnostic()), It.IsAny<LocalEpisode>(), It.IsAny<bool>()));
         }
 
         [Test]
-        public void should_delete_existing_metadata_files_with_the_same_path()
+        public void should_update_existing_metadata_and_links_atomically_at_same_path()
         {
             Mocker.GetMock<IMediaFileService>()
                   .Setup(s => s.GetFilesWithRelativePath(It.IsAny<int>(), It.IsAny<string>()))
@@ -354,8 +429,10 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
 
             Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, false);
 
+            Mocker.GetMock<IEpisodeTrackFileService>()
+                .Verify(v => v.UpdateFile(It.Is<EpisodeFile>(f => f.Id == 1), It.IsAny<List<EpisodeTrackFile>>(), true), Times.Once());
             Mocker.GetMock<IMediaFileService>()
-                  .Verify(v => v.Delete(It.IsAny<EpisodeFile>(), DeleteMediaFileReason.ManualOverride), Times.Once());
+                .Verify(v => v.Delete(It.IsAny<EpisodeFile>(), It.IsAny<DeleteMediaFileReason>()), Times.Never());
         }
 
         [Test]
@@ -371,7 +448,7 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
 
             Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, true, _downloadClientItem);
 
-            Mocker.GetMock<IMediaFileService>().Verify(v => v.Add(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}\\subfolder\\{name}.mkv".AsOsAgnostic())));
+            Mocker.GetMock<IUpgradeMediaFiles>().Verify(v => v.UpgradeEpisodeFile(It.Is<EpisodeFile>(c => c.OriginalFilePath == $"{name}\\subfolder\\{name}.mkv".AsOsAgnostic()), It.IsAny<LocalEpisode>(), It.IsAny<bool>()));
         }
 
         [Test]
@@ -385,6 +462,84 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
             Mocker.GetMock<IUpgradeMediaFiles>()
                   .Verify(v => v.UpgradeEpisodeFile(It.Is<EpisodeFile>(e => e.SceneName == firstDecision.LocalEpisode.SceneName), _approvedDecisions.First().LocalEpisode, false),
                       Times.Once());
+        }
+
+        [Test]
+        public void explicit_empty_targets_should_skip_without_writing_file_or_ownership()
+        {
+            var decision = _approvedDecisions.First();
+            decision.LocalEpisode.TargetQualityTrackIds = new List<int>();
+
+            Subject.Import(new List<ImportDecision> { decision }, true).Should().ContainSingle().Which.Result.Should().Be(ImportResultType.Skipped);
+
+            Mocker.GetMock<IUpgradeMediaFiles>().Verify(s => s.UpgradeEpisodeFile(It.IsAny<EpisodeFile>(), It.IsAny<LocalEpisode>(), It.IsAny<bool>()), Times.Never());
+            Mocker.GetMock<IEpisodeTrackFileService>().Verify(s => s.ImportFile(It.IsAny<EpisodeFile>(), It.IsAny<List<EpisodeTrackFile>>()), Times.Never());
+        }
+
+        [Test]
+        public void duplicate_existing_path_records_should_require_ownership_resolution()
+        {
+            Mocker.GetMock<IMediaFileService>().Setup(s => s.GetFilesWithRelativePath(It.IsAny<int>(), It.IsAny<string>()))
+                .Returns(new List<EpisodeFile> { new EpisodeFile { Id = 1 }, new EpisodeFile { Id = 2 } });
+
+            Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, false).Should().ContainSingle().Which.Result.Should().Be(ImportResultType.Skipped);
+
+            Mocker.GetMock<IEpisodeTrackFileService>().Verify(s => s.UpdateFile(It.IsAny<EpisodeFile>(), It.IsAny<List<EpisodeTrackFile>>(), It.IsAny<bool>()), Times.Never());
+            ExceptionVerification.ExpectedWarns(1);
+        }
+
+        [Test]
+        public void script_import_should_pass_committed_file_identity_to_extra_file_matching()
+        {
+            var local = _approvedDecisions.First().LocalEpisode;
+            local.ScriptImported = true;
+            local.FileNameBeforeRename = "original.mkv";
+            local.PossibleExtraFiles = new List<string> { "original.en.srt" };
+            Mocker.GetMock<IUpgradeMediaFiles>()
+                .Setup(s => s.UpgradeEpisodeFile(It.IsAny<EpisodeFile>(), local, It.IsAny<bool>()))
+                .Returns<EpisodeFile, LocalEpisode, bool>((file, episode, copy) =>
+                {
+                    file.Id = 42;
+                    file.RelativePath = "script-renamed.mkv";
+                    return new EpisodeFileMoveResult { EpisodeFile = file };
+                });
+
+            Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, true).Should().ContainSingle().Which.Result.Should().Be(ImportResultType.Imported);
+
+            Mocker.GetMock<IExistingExtraFiles>().Verify(s => s.ImportExtraFiles(local.Series, local.PossibleExtraFiles, "original.mkv", 42), Times.Once());
+            Mocker.GetMock<IExtraService>().Verify(s => s.MoveFilesAfterRename(local.Series, It.Is<EpisodeFile>(f => f.Id == 42), false), Times.Once());
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        public void published_import_should_report_logical_and_physical_upgrade_status(bool logicalUpgrade, bool deletedFile)
+        {
+            var local = _approvedDecisions.First().LocalEpisode;
+            local.IsUpgrade = logicalUpgrade;
+            var previousFiles = deletedFile ? new List<DeletedEpisodeFile> { new DeletedEpisodeFile(new EpisodeFile { Id = 99 }, null) } : new List<DeletedEpisodeFile>();
+            Mocker.GetMock<IUpgradeMediaFiles>().Setup(s => s.UpgradeEpisodeFile(It.IsAny<EpisodeFile>(), local, It.IsAny<bool>()))
+                .Returns(new EpisodeFileMoveResult { OldFiles = previousFiles });
+            EpisodeImportedEvent imported = null;
+            Mocker.GetMock<IEventAggregator>().Setup(s => s.PublishEvent(It.IsAny<EpisodeImportedEvent>())).Callback<EpisodeImportedEvent>(message => imported = message);
+
+            Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, true);
+
+            imported.Should().NotBeNull();
+            imported.IsUpgrade.Should().Be(logicalUpgrade || deletedFile);
+        }
+
+        [Test]
+        public void committed_import_should_publish_history_event_even_if_extra_processing_fails()
+        {
+            Mocker.GetMock<IExtraService>().Setup(s => s.ImportEpisode(It.IsAny<LocalEpisode>(), It.IsAny<EpisodeFile>(), It.IsAny<bool>()))
+                .Throws(new IOException("Extra file store unavailable"));
+
+            var results = Subject.Import(new List<ImportDecision> { _approvedDecisions.First() }, true);
+
+            results.Should().ContainSingle().Which.Result.Should().Be(ImportResultType.Imported);
+            Mocker.GetMock<IEventAggregator>().Verify(s => s.PublishEvent(It.IsAny<EpisodeImportedEvent>()), Times.Once());
+            ExceptionVerification.ExpectedWarns(1);
         }
     }
 }

@@ -34,6 +34,7 @@ namespace NzbDrone.Core.Download.Pending
         Queue.Queue FindPendingQueueItem(int queueId);
         void RemovePendingQueueItems(int queueId);
         RemoteEpisode OldestPendingRelease(int seriesId, int[] episodeIds);
+        RemoteEpisode OldestPendingRelease(int seriesId, int[] episodeIds, List<int> targetQualityTrackIds);
         List<Queue.Queue> GetPendingQueueObsolete();
         Queue.Queue FindPendingQueueItemObsolete(int queueId);
         void RemovePendingQueueItemsObsolete(int queueId);
@@ -101,6 +102,28 @@ namespace NzbDrone.Core.Download.Pending
 
         public void AddMany(List<Tuple<DownloadDecision, PendingReleaseReason>> decisions)
         {
+            decisions = decisions.SelectMany(pair =>
+            {
+                var remote = pair.Item1.RemoteEpisode;
+                var targets = remote.TargetQualityTrackIds;
+
+                if (targets == null || targets.Count < 2)
+                {
+                    return new[] { pair };
+                }
+
+                return targets.Select(id =>
+                {
+                    var track = remote.Series.QualityTracks?.Value?.SingleOrDefault(t => t.Id == id);
+                    var scoped = track == null ? remote.Clone() : QualityTrackSnapshot.Create(
+                        remote,
+                        track,
+                        remote.Episodes.SelectMany(e => e.TrackFiles?.Value ?? []));
+                    scoped.TargetQualityTrackIds = [id];
+                    return Tuple.Create(new DownloadDecision(scoped, pair.Item1.Rejections.ToArray()), pair.Item2);
+                }).ToArray();
+            }).ToList();
+
             foreach (var seriesDecisions in decisions.GroupBy(v => v.Item1.RemoteEpisode.Series.Id))
             {
                 var series = seriesDecisions.First().Item1.RemoteEpisode.Series;
@@ -120,7 +143,10 @@ namespace NzbDrone.Core.Download.Pending
                     var existingReports = episodeIds.SelectMany(v => alreadyPendingByEpisode[v])
                                                     .Distinct().ToList();
 
-                    var matchingReports = existingReports.Where(MatchingReleasePredicate(decision.RemoteEpisode.Release)).ToList();
+                    var matchingReports = existingReports.Where(MatchingReleasePredicate(decision.RemoteEpisode.Release))
+                        .Where(p => QualityTrackSnapshot.GetTargets(p.RemoteEpisode).OrderBy(id => id)
+                            .SequenceEqual(QualityTrackSnapshot.GetTargets(decision.RemoteEpisode).OrderBy(id => id)))
+                        .ToList();
 
                     if (matchingReports.Any())
                     {
@@ -171,10 +197,22 @@ namespace NzbDrone.Core.Download.Pending
         {
             var releases = _repository.All().Select(p =>
             {
-                var release = p.Release;
+                var release = p.Release.Clone();
+                var legacyTargets = QualityTrackSnapshot.LegacyTargets(_seriesService.GetSeries(p.SeriesId));
+                release.TargetQualityTrackIds = p.AdditionalInfo?.TargetQualityTrackIds ?? (legacyTargets.Contains(0) ? null : legacyTargets);
+                release.TargetQualityTrackSignatures = p.AdditionalInfo?.TargetQualityTrackSignatures;
 
                 release.PendingReleaseReason = p.Reason;
 
+                return release;
+            }).GroupBy(r => (r.IndexerId, r.Guid, r.Title, r.PublishDate)).Select(group =>
+            {
+                var release = group.First();
+                release.TargetQualityTrackIds = group.Any(r => r.TargetQualityTrackIds == null)
+                    ? null
+                    : group.SelectMany(r => r.TargetQualityTrackIds).Distinct().ToList();
+                release.TargetQualityTrackSignatures = group.SelectMany(r => r.TargetQualityTrackSignatures ?? new Dictionary<int, string>())
+                    .GroupBy(p => p.Key).ToDictionary(g => g.Key, g => g.First().Value);
                 return release;
             }).ToList();
 
@@ -214,7 +252,7 @@ namespace NzbDrone.Core.Download.Pending
             }
 
             // Return best quality release for each episode group, this may result in multiple for the same episode if the episodes in each release differ
-            var deduped = queued.Where(q => q.Episodes.Any()).GroupBy(q => q.Episodes.Select(e => e.Id)).Select(g =>
+            var deduped = queued.Where(q => q.Episodes.Any()).GroupBy(q => (Episodes: string.Join(",", q.Episodes.Select(e => e.Id).OrderBy(id => id)), Tracks: string.Join(",", QualityTrackSnapshot.GetTargets(q.RemoteEpisode).OrderBy(id => id)))).Select(g =>
             {
                 var series = g.First().Series;
 
@@ -254,7 +292,7 @@ namespace NzbDrone.Core.Download.Pending
 #pragma warning disable CS0612
 
             // Return best quality release for each episode
-            var deduped = queued.Where(q => q.Episode != null).GroupBy(q => q.Episode.Id).Select(g =>
+            var deduped = queued.Where(q => q.Episode != null).GroupBy(q => (q.Episode.Id, Tracks: string.Join(",", QualityTrackSnapshot.GetTargets(q.RemoteEpisode).OrderBy(id => id)))).Select(g =>
             {
                 var series = g.First().Series;
 
@@ -280,10 +318,11 @@ namespace NzbDrone.Core.Download.Pending
         public void RemovePendingQueueItems(int queueId)
         {
             var targetItem = FindPendingRelease(queueId);
-            var seriesReleases = _repository.AllBySeriesId(targetItem.SeriesId);
+            var seriesReleases = IncludeRemoteEpisodes(_repository.AllBySeriesId(targetItem.SeriesId));
 
             var releasesToRemove = seriesReleases.Where(
-                c => c.ParsedEpisodeInfo.SeasonNumber == targetItem.ParsedEpisodeInfo.SeasonNumber &&
+                c => QualityTrackSnapshot.TargetsOverlap(c.RemoteEpisode, targetItem.RemoteEpisode) &&
+                     c.ParsedEpisodeInfo.SeasonNumber == targetItem.ParsedEpisodeInfo.SeasonNumber &&
                      c.ParsedEpisodeInfo.EpisodeNumbers.SequenceEqual(targetItem.ParsedEpisodeInfo.EpisodeNumbers));
 
             _repository.DeleteMany(releasesToRemove.Select(c => c.Id));
@@ -292,10 +331,11 @@ namespace NzbDrone.Core.Download.Pending
         public void RemovePendingQueueItemsObsolete(int queueId)
         {
             var targetItem = FindPendingReleaseObsolete(queueId);
-            var seriesReleases = _repository.AllBySeriesId(targetItem.SeriesId);
+            var seriesReleases = IncludeRemoteEpisodes(_repository.AllBySeriesId(targetItem.SeriesId));
 
             var releasesToRemove = seriesReleases.Where(
-                c => c.ParsedEpisodeInfo.SeasonNumber == targetItem.ParsedEpisodeInfo.SeasonNumber &&
+                c => QualityTrackSnapshot.TargetsOverlap(c.RemoteEpisode, targetItem.RemoteEpisode) &&
+                     c.ParsedEpisodeInfo.SeasonNumber == targetItem.ParsedEpisodeInfo.SeasonNumber &&
                      c.ParsedEpisodeInfo.EpisodeNumbers.SequenceEqual(targetItem.ParsedEpisodeInfo.EpisodeNumbers));
 
             _repository.DeleteMany(releasesToRemove.Select(c => c.Id));
@@ -303,10 +343,16 @@ namespace NzbDrone.Core.Download.Pending
 
         public RemoteEpisode OldestPendingRelease(int seriesId, int[] episodeIds)
         {
+            return OldestPendingRelease(seriesId, episodeIds, null);
+        }
+
+        public RemoteEpisode OldestPendingRelease(int seriesId, int[] episodeIds, List<int> targetQualityTrackIds)
+        {
             var seriesReleases = GetPendingReleases(seriesId);
 
             return seriesReleases.Select(r => r.RemoteEpisode)
                                  .Where(r => r.Episodes.Select(e => e.Id).Intersect(episodeIds).Any())
+                                 .Where(r => targetQualityTrackIds == null || QualityTrackSnapshot.GetTargets(r).Intersect(targetQualityTrackIds).Any())
                                  .MaxBy(p => p.Release.AgeHours);
         }
 
@@ -374,6 +420,8 @@ namespace NzbDrone.Core.Download.Pending
                     Series = series,
                     SeriesMatchType = release.AdditionalInfo?.SeriesMatchType ?? SeriesMatchType.Unknown,
                     ReleaseSource = release.AdditionalInfo?.ReleaseSource ?? ReleaseSourceType.Unknown,
+                    TargetQualityTrackIds = release.AdditionalInfo?.TargetQualityTrackIds,
+                    TargetQualityTrackSignatures = release.AdditionalInfo?.TargetQualityTrackSignatures,
                     ParsedEpisodeInfo = release.ParsedEpisodeInfo,
                     Release = release.Release
                 };
@@ -408,6 +456,16 @@ namespace NzbDrone.Core.Download.Pending
 
                 _aggregationService.Augment(release.RemoteEpisode);
                 release.RemoteEpisode.CustomFormats = _formatCalculator.ParseCustomFormat(release.RemoteEpisode, release.Release.Size);
+                var targetIds = QualityTrackSnapshot.GetTargets(release.RemoteEpisode).ToList();
+                var track = series.QualityTracks?.Value?.SingleOrDefault(t => targetIds.Count == 1 && t.Id == targetIds[0]);
+
+                if (track != null)
+                {
+                    release.RemoteEpisode = QualityTrackSnapshot.Create(
+                        release.RemoteEpisode,
+                        track,
+                        release.RemoteEpisode.Episodes.SelectMany(e => e.TrackFiles?.Value ?? []));
+                }
 
                 result.Add(release);
             }
@@ -538,7 +596,9 @@ namespace NzbDrone.Core.Download.Pending
                 AdditionalInfo = new PendingReleaseAdditionalInfo
                 {
                     SeriesMatchType = decision.RemoteEpisode.SeriesMatchType,
-                    ReleaseSource = decision.RemoteEpisode.ReleaseSource
+                    ReleaseSource = decision.RemoteEpisode.ReleaseSource,
+                    TargetQualityTrackIds = decision.RemoteEpisode.TargetQualityTrackIds?.ToList(),
+                    TargetQualityTrackSignatures = decision.RemoteEpisode.TargetQualityTrackSignatures
                 }
             });
 
@@ -565,7 +625,8 @@ namespace NzbDrone.Core.Download.Pending
             var pendingReleases = GetPendingReleases(remoteEpisode.Series.Id);
             var episodeIds = remoteEpisode.Episodes.Select(e => e.Id);
 
-            var existingReports = pendingReleases.Where(r => r.RemoteEpisode.Episodes.Select(e => e.Id)
+            var existingReports = pendingReleases.Where(r => QualityTrackSnapshot.TargetsOverlap(r.RemoteEpisode, remoteEpisode))
+                                                .Where(r => r.RemoteEpisode.Episodes.Select(e => e.Id)
                                                              .Intersect(episodeIds)
                                                              .Any())
                                                              .ToList();
@@ -575,11 +636,9 @@ namespace NzbDrone.Core.Download.Pending
                 return;
             }
 
-            var profile = remoteEpisode.Series.QualityProfile;
-
             foreach (var existingReport in existingReports)
             {
-                var compare = new QualityModelComparer(profile).Compare(remoteEpisode.ParsedEpisodeInfo.Quality,
+                var compare = new QualityModelComparer(existingReport.RemoteEpisode.Series.QualityProfile).Compare(remoteEpisode.ParsedEpisodeInfo.Quality,
                                                                         existingReport.RemoteEpisode.ParsedEpisodeInfo.Quality);
 
                 // Only remove lower/equal quality pending releases
@@ -599,7 +658,8 @@ namespace NzbDrone.Core.Download.Pending
 
             foreach (var rejectedRelease in rejected)
             {
-                var matching = pending.Where(MatchingReleasePredicate(rejectedRelease.RemoteEpisode.Release));
+                var matching = pending.Where(MatchingReleasePredicate(rejectedRelease.RemoteEpisode.Release))
+                    .Where(p => QualityTrackSnapshot.TargetsOverlap(p.RemoteEpisode, rejectedRelease.RemoteEpisode));
 
                 foreach (var pendingRelease in matching)
                 {

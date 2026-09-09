@@ -4,14 +4,20 @@ using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
 using FizzWare.NBuilder;
+using FluentAssertions;
 using Moq;
 using NUnit.Framework;
 using NzbDrone.Common.Http;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients;
+using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Test.Framework;
 using NzbDrone.Core.Tv;
 
@@ -27,6 +33,7 @@ namespace NzbDrone.Core.Test.Download
         public void Setup()
         {
             _downloadClients = new List<IDownloadClient>();
+            Mocker.GetMock<ITrackedDownloadService>().Setup(s => s.GetTrackedDownloads()).Returns(new List<TrackedDownload>());
 
             Mocker.GetMock<IProvideDownloadClient>()
                 .Setup(v => v.GetDownloadClients(It.IsAny<DownloadProtocol>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<HashSet<int>>()))
@@ -76,6 +83,112 @@ namespace NzbDrone.Core.Test.Download
             mock.SetupGet(v => v.Protocol).Returns(DownloadProtocol.Torrent);
 
             return mock;
+        }
+
+        [Test]
+        public async Task should_capture_selected_profiles_before_client_receives_release()
+        {
+            var client = WithUsenetClient();
+            var primary = new QualityProfile { Id = 1, Cutoff = 1 };
+            var secondary = new QualityProfile
+            {
+                Id = 2,
+                Cutoff = 100,
+                Items = new List<QualityProfileQualityItem>
+                {
+                    new()
+                    {
+                        Id = 100,
+                        Allowed = true,
+                        Items = new List<QualityProfileQualityItem>
+                        {
+                            new() { Quality = Quality.HDTV1080p, Allowed = true },
+                            new() { Quality = Quality.WEBDL1080p, Allowed = true }
+                        }
+                    }
+                }
+            };
+            _parseResult.Series.QualityTracks = new List<SeriesQualityTrack>
+            {
+                new() { Id = 10, QualityProfile = primary },
+                new() { Id = 20, QualityProfile = secondary }
+            };
+            _parseResult.TargetQualityTrackIds = [10, 20];
+            var captured = new Dictionary<int, string>();
+            client.Setup(c => c.Download(It.IsAny<RemoteEpisode>(), It.IsAny<IIndexer>()))
+                .Callback<RemoteEpisode, IIndexer>((remote, _) => captured = new Dictionary<int, string>(remote.TargetQualityTrackSignatures));
+
+            await Subject.DownloadReport(_parseResult, null);
+            var original = captured[20];
+            secondary.Cutoff = 30;
+
+            captured.Keys.Should().BeEquivalentTo(new[] { 10, 20 });
+            captured[10].Should().NotBe(captured[20]);
+            _parseResult.TargetQualityTrackSignatures[20].Should().Be(original);
+            QualityTrackSnapshot.ProfileSignature(secondary).Should().NotBe(original);
+        }
+
+        [Test]
+        public async Task should_capture_sole_legacy_profile_without_extra_track_choice()
+        {
+            WithUsenetClient();
+            _parseResult.Series.QualityProfile = new QualityProfile { Id = 1 };
+            _parseResult.TargetQualityTrackIds = [10];
+
+            await Subject.DownloadReport(_parseResult, null);
+
+            _parseResult.TargetQualityTrackSignatures.Should().ContainSingle().Which.Key.Should().Be(10);
+        }
+
+        [Test]
+        public async Task should_reuse_queued_release_and_persist_union_of_targets()
+        {
+            var client = WithUsenetClient();
+            _parseResult.TargetQualityTrackIds = [20];
+            var queued = _parseResult.Clone();
+            queued.TargetQualityTrackIds = [10];
+            var tracked = new TrackedDownload
+            {
+                RemoteEpisode = queued,
+                IsTrackable = true,
+                State = TrackedDownloadState.Downloading,
+                DownloadClient = 7,
+                DownloadItem = new DownloadClientItem
+                {
+                    DownloadId = "download-id",
+                    DownloadClientInfo = new DownloadClientItemClientInfo { Id = 7, Name = "Client", Type = "Test" }
+                }
+            };
+            Mocker.GetMock<ITrackedDownloadService>().Setup(s => s.GetTrackedDownloads()).Returns(new List<TrackedDownload> { tracked });
+            EpisodeGrabbedEvent grabbed = null;
+            Mocker.GetMock<IEventAggregator>().Setup(e => e.PublishEvent(It.IsAny<EpisodeGrabbedEvent>()))
+                .Callback<EpisodeGrabbedEvent>(e => grabbed = e);
+
+            await Subject.DownloadReport(_parseResult, null);
+
+            client.Verify(c => c.Download(It.IsAny<RemoteEpisode>(), It.IsAny<IIndexer>()), Times.Never());
+            grabbed.DownloadId.Should().Be("download-id");
+            grabbed.NewQualityTrackIds.Should().Equal(20);
+            grabbed.Episode.TargetQualityTrackIds.Should().BeEquivalentTo([10, 20]);
+            tracked.RemoteEpisode.TargetQualityTrackIds.Should().BeEquivalentTo([10, 20]);
+            _parseResult.TargetQualityTrackIds.Should().Equal(20);
+        }
+
+        [TestCase(TrackedDownloadState.Failed)]
+        [TestCase(TrackedDownloadState.Imported)]
+        [TestCase(TrackedDownloadState.Importing)]
+        public async Task should_not_attach_targets_to_terminal_or_importing_download(TrackedDownloadState state)
+        {
+            var client = WithUsenetClient();
+            _parseResult.TargetQualityTrackIds = [20];
+            Mocker.GetMock<ITrackedDownloadService>().Setup(s => s.GetTrackedDownloads()).Returns(new List<TrackedDownload>
+            {
+                new() { RemoteEpisode = _parseResult, IsTrackable = true, State = state }
+            });
+
+            await Subject.DownloadReport(_parseResult, null);
+
+            client.Verify(c => c.Download(It.IsAny<RemoteEpisode>(), It.IsAny<IIndexer>()), Times.Once());
         }
 
         [Test]

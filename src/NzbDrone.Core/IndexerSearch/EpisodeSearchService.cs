@@ -23,6 +23,8 @@ namespace NzbDrone.Core.IndexerSearch
         private readonly IEpisodeService _episodeService;
         private readonly IEpisodeCutoffService _episodeCutoffService;
         private readonly IQueueService _queueService;
+        private readonly ISeriesService _seriesService;
+        private readonly ISeriesQualityTrackService _qualityTrackService;
         private readonly Logger _logger;
 
         public EpisodeSearchService(ISearchForReleases releaseSearchService,
@@ -30,6 +32,8 @@ namespace NzbDrone.Core.IndexerSearch
                                     IEpisodeService episodeService,
                                     IEpisodeCutoffService episodeCutoffService,
                                     IQueueService queueService,
+                                    ISeriesService seriesService,
+                                    ISeriesQualityTrackService qualityTrackService,
                                     Logger logger)
         {
             _releaseSearchService = releaseSearchService;
@@ -37,6 +41,8 @@ namespace NzbDrone.Core.IndexerSearch
             _episodeService = episodeService;
             _episodeCutoffService = episodeCutoffService;
             _queueService = queueService;
+            _seriesService = seriesService;
+            _qualityTrackService = qualityTrackService;
             _logger = logger;
         }
 
@@ -112,7 +118,7 @@ namespace NzbDrone.Core.IndexerSearch
             foreach (var episodeId in message.EpisodeIds)
             {
                 var decisions = _releaseSearchService.EpisodeSearch(episodeId, message.Trigger == CommandTrigger.Manual, false).GetAwaiter().GetResult();
-                var processed = _processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
+                var processed = _processDownloadDecisions.ProcessDecisions(QualityTrackSnapshot.FilterDecisions(decisions, message.TargetQualityTrackIds)).GetAwaiter().GetResult();
 
                 _logger.ProgressInfo("Episode search completed. {0} reports downloaded.", processed.Grabbed.Count);
             }
@@ -125,9 +131,10 @@ namespace NzbDrone.Core.IndexerSearch
 
             if (message.SeriesId.HasValue)
             {
+                var series = _seriesService.GetSeries(message.SeriesId.Value);
                 episodes = _episodeService.GetEpisodeBySeries(message.SeriesId.Value)
                                           .Where(e => e.Monitored == monitored &&
-                                                 !e.HasFile &&
+                                                 QualityTrackSnapshot.IsMissing(e, series) &&
                                                  e.AirDateUtc.HasValue &&
                                                  e.AirDateUtc.Value.Before(DateTime.UtcNow))
                                           .ToList();
@@ -156,10 +163,7 @@ namespace NzbDrone.Core.IndexerSearch
                     pagingSpec.FilterExpressions.Add(e => message.SeriesIds.Contains(e.SeriesId));
                 }
 
-                if (message.QualityProfileIds?.Any() == true)
-                {
-                    pagingSpec.FilterExpressions.Add(e => message.QualityProfileIds.Contains(e.Series.QualityProfileId));
-                }
+                AddQualityProfileFilter(pagingSpec, message.QualityProfileIds);
 
                 if (message.SeriesType?.Any() == true)
                 {
@@ -169,8 +173,8 @@ namespace NzbDrone.Core.IndexerSearch
                 episodes = _episodeService.EpisodesWithoutFiles(pagingSpec, true, message.SeriesTags).Records.ToList();
             }
 
-            var queue = GetQueuedEpisodeIds();
-            var missing = episodes.Where(e => !queue.Contains(e.Id)).ToList();
+            var queue = _queueService.GetQueue();
+            var missing = episodes.Where(e => !IsQueued(e, queue)).ToList();
 
             SearchForBulkEpisodes(missing, monitored, message.Trigger == CommandTrigger.Manual).GetAwaiter().GetResult();
         }
@@ -207,10 +211,7 @@ namespace NzbDrone.Core.IndexerSearch
                 pagingSpec.FilterExpressions.Add(e => message.SeriesIds.Contains(e.SeriesId));
             }
 
-            if (message.QualityProfileIds?.Any() == true)
-            {
-                pagingSpec.FilterExpressions.Add(e => message.QualityProfileIds.Contains(e.Series.QualityProfileId));
-            }
+            AddQualityProfileFilter(pagingSpec, message.QualityProfileIds);
 
             if (message.SeriesType?.Any() == true)
             {
@@ -218,18 +219,37 @@ namespace NzbDrone.Core.IndexerSearch
             }
 
             var episodes = _episodeCutoffService.EpisodesWhereCutoffUnmet(pagingSpec, message.SeriesTags, message.Quality).Records.ToList();
-            var queue = GetQueuedEpisodeIds();
-            var cutoffUnmet = episodes.Where(e => !queue.Contains(e.Id)).ToList();
+            var queue = _queueService.GetQueue();
+            var cutoffUnmet = episodes.Where(e => !IsQueued(e, queue)).ToList();
 
             SearchForBulkEpisodes(cutoffUnmet, monitored, message.Trigger == CommandTrigger.Manual).GetAwaiter().GetResult();
         }
 
-        private List<int> GetQueuedEpisodeIds()
+        private void AddQualityProfileFilter(PagingSpec<Episode> pagingSpec, List<int> profileIds)
         {
-            return _queueService.GetQueue()
-                .Where(q => q.Episodes.Any())
-                .SelectMany(q => q.Episodes.Select(e => e.Id))
-                .ToList();
+            if (profileIds?.Any() != true)
+            {
+                return;
+            }
+
+            var seriesIds = _qualityTrackService.GetAllTracks()
+                .Where(t => t.Enabled && profileIds.Contains(t.QualityProfileId))
+                .Select(t => t.SeriesId)
+                .Distinct().ToList();
+            pagingSpec.FilterExpressions.Add(e => profileIds.Contains(e.Series.QualityProfileId) || seriesIds.Contains(e.SeriesId));
+        }
+
+        private bool IsQueued(Episode episode, List<Queue.Queue> queue)
+        {
+            var matching = queue.Where(q => q.Episodes.Any(e => e.Id == episode.Id)).ToList();
+            var tracks = (episode.Series ?? matching.FirstOrDefault()?.RemoteEpisode?.Series)?.QualityTracks?.Value?.Where(t => t.Enabled).ToList();
+
+            if (tracks == null || tracks.Count == 0)
+            {
+                return matching.Any();
+            }
+
+            return tracks.All(track => matching.Any(q => q.RemoteEpisode != null && QualityTrackSnapshot.GetTargets(q.RemoteEpisode).Contains(track.Id)));
         }
     }
 }

@@ -35,6 +35,7 @@ public class ReleaseController : RestController<ReleaseResource>
     private readonly IEpisodeService _episodeService;
     private readonly IParsingService _parsingService;
     private readonly IHistoryService _historyService;
+    private readonly ISeriesQualityTrackService _qualityTrackService;
     private readonly Logger _logger;
 
     private readonly QualityProfile _qualityProfile;
@@ -51,6 +52,7 @@ public class ReleaseController : RestController<ReleaseResource>
                          IHistoryService historyService,
                          ICacheManager cacheManager,
                          IQualityProfileService qualityProfileService,
+                         ISeriesQualityTrackService qualityTrackService,
                          Logger logger)
     {
         _rssFetcherAndParser = rssFetcherAndParser;
@@ -62,6 +64,7 @@ public class ReleaseController : RestController<ReleaseResource>
         _episodeService = episodeService;
         _parsingService = parsingService;
         _historyService = historyService;
+        _qualityTrackService = qualityTrackService;
         _logger = logger;
 
         _qualityProfile = qualityProfileService.GetDefaultProfile(string.Empty);
@@ -98,6 +101,9 @@ public class ReleaseController : RestController<ReleaseResource>
 
         try
         {
+            remoteEpisode = remoteEpisode.Clone();
+            remoteEpisode.Release = remoteEpisode.Release.Clone();
+
             if (release.Override != null)
             {
                 var overrideInfo = release.Override;
@@ -175,6 +181,33 @@ public class ReleaseController : RestController<ReleaseResource>
             {
                 throw new NzbDroneClientException(HttpStatusCode.NotFound, "Unable to parse episodes in the release, will need to be manually provided");
             }
+
+            if (remoteEpisode.Episodes.Any(e => e.SeriesId != remoteEpisode.Series.Id))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.BadRequest, "All selected episodes must belong to the selected series.");
+            }
+
+            var tracks = _qualityTrackService.GetEnabledTracks(remoteEpisode.Series.Id);
+            var requestedTargets = release.TargetQualityTrackIds;
+
+            if (requestedTargets == null)
+            {
+                requestedTargets = remoteEpisode.TargetQualityTrackIds?.Count > 0
+                    ? remoteEpisode.TargetQualityTrackIds
+                    : tracks.Count == 1 ? new List<int> { tracks[0].Id } : null;
+            }
+
+            if (requestedTargets == null || requestedTargets.Count == 0 || requestedTargets.Distinct().Count() != requestedTargets.Count ||
+                requestedTargets.Any(id => tracks.All(t => t.Id != id)))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.BadRequest, "Select one or more enabled quality profiles for this series.");
+            }
+
+            remoteEpisode.TargetQualityTrackIds = requestedTargets.ToList();
+            remoteEpisode.Release.TargetQualityTrackIds = requestedTargets.ToList();
+            remoteEpisode.TargetQualityTrackSignatures = remoteEpisode.TargetQualityTrackSignatures?
+                .Where(s => requestedTargets.Contains(s.Key)).ToDictionary(s => s.Key, s => s.Value) ?? [];
+            remoteEpisode.Release.TargetQualityTrackSignatures = new Dictionary<int, string>(remoteEpisode.TargetQualityTrackSignatures);
 
             await _downloadService.DownloadReport(remoteEpisode, release.Override?.DownloadClientId);
         }

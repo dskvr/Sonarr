@@ -45,6 +45,9 @@ namespace NzbDrone.Core.Test.TvTests.SeriesRepositoryTests
                 .With(x => x.CleanTitle = "crownextralong")
                 .BuildList();
 
+            var profile = new QualityProfile { Name = "Profile", Items = new System.Collections.Generic.List<QualityProfileQualityItem>() };
+            Db.Insert(profile);
+            series.ForEach(s => s.QualityProfileId = profile.Id);
             Subject.InsertMany(series);
         }
 

@@ -23,6 +23,7 @@ public class ManualImportResource : RestResource
     public int? SeasonNumber { get; set; }
     public List<EpisodeResource> Episodes { get; set; } = [];
     public int? EpisodeFileId { get; set; }
+    public List<int>? TargetQualityTrackIds { get; set; }
     public string? ReleaseGroup { get; set; }
     public QualityModel? Quality { get; set; }
     public List<Language> Languages { get; set; } = [];
@@ -54,6 +55,7 @@ public static class ManualImportResourceMapper
             SeasonNumber = model.SeasonNumber,
             Episodes = model.Episodes?.ToResource() ?? [],
             EpisodeFileId = model.EpisodeFileId,
+            TargetQualityTrackIds = model.TargetQualityTrackIds,
             ReleaseGroup = model.ReleaseGroup,
             Quality = model.Quality,
             Languages = model.Languages,

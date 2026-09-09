@@ -5,6 +5,8 @@ namespace NzbDrone.Core.IndexerSearch
 {
     public class EpisodeSearchCommand : Command
     {
+        public List<int> TargetQualityTrackIds { get; set; }
+
         public List<int> EpisodeIds { get; set; }
 
         public override bool SendUpdatesToClient => true;

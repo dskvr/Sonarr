@@ -21,5 +21,6 @@ namespace NzbDrone.Core.SeriesStats
         public List<ReleaseType> ReleaseTypes { get; set; }
         public List<Quality> EpisodeFileQualities { get; set; }
         public List<SeasonStatistics> SeasonStatistics { get; set; }
+        public List<QualityTrackStatistics> QualityTracks { get; set; } = new List<QualityTrackStatistics>();
     }
 }

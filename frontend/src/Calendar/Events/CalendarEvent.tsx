@@ -6,11 +6,13 @@ import { useCalendarOptions } from 'Calendar/calendarOptionsStore';
 import getStatusStyle from 'Calendar/getStatusStyle';
 import Icon from 'Components/Icon';
 import Link from 'Components/Link/Link';
+import { EpisodeQualityTrack } from 'Episode/Episode';
 import EpisodeDetailsModal from 'Episode/EpisodeDetailsModal';
 import episodeEntities from 'Episode/episodeEntities';
 import getFinaleTypeName from 'Episode/getFinaleTypeName';
 import { useEpisodeFile } from 'EpisodeFile/EpisodeFileProvider';
 import { icons, kinds } from 'Helpers/Props';
+import { getEpisodeQualityTrackState } from 'Series/QualityProfiles/qualityTrackState';
 import { useSingleSeries } from 'Series/useSeries';
 import { useUiSettingsValues } from 'Settings/UI/useUiSettings';
 import formatTime from 'Utilities/Date/formatTime';
@@ -24,6 +26,7 @@ interface CalendarEventProps {
   episodeId: number;
   seriesId: number;
   episodeFileId?: number;
+  qualityTracks?: EpisodeQualityTrack[];
   title: string;
   seasonNumber: number;
   episodeNumber: number;
@@ -42,6 +45,7 @@ function CalendarEvent(props: CalendarEventProps) {
     id,
     seriesId,
     episodeFileId,
+    qualityTracks,
     title,
     seasonNumber,
     episodeNumber,
@@ -89,8 +93,9 @@ function CalendarEvent(props: CalendarEventProps) {
   const endTime = moment(airDateUtc).add(series.runtime, 'minutes');
   const isDownloading = !!(queueItem || grabbed);
   const isMonitored = series.monitored && monitored;
+  const trackState = getEpisodeQualityTrackState(qualityTracks);
   const statusStyle = getStatusStyle(
-    hasFile,
+    trackState.isMultiple ? trackState.missing === 0 : hasFile,
     isDownloading,
     startTime,
     endTime,
@@ -151,8 +156,9 @@ function CalendarEvent(props: CalendarEventProps) {
             ) : null}
 
             {showCutoffUnmetIcon &&
-            !!episodeFile &&
-            episodeFile.qualityCutoffNotMet ? (
+            (trackState.isMultiple
+              ? trackState.cutoffUnmet > 0
+              : !!episodeFile && episodeFile.qualityCutoffNotMet) ? (
               <Icon
                 className={styles.statusIcon}
                 name={icons.EPISODE_FILE}
@@ -210,6 +216,20 @@ function CalendarEvent(props: CalendarEventProps) {
                 </span>
               ) : null}
             </div>
+          </div>
+        ) : null}
+
+        {trackState.isMultiple ? (
+          <div
+            title={translate('QualityTrackProgressDetail', {
+              missing: trackState.missing,
+              cutoffUnmet: trackState.cutoffUnmet,
+            })}
+          >
+            {translate('QualityTrackVersionProgress', {
+              present: trackState.present,
+              desired: trackState.enabled.length,
+            })}
           </div>
         ) : null}
 

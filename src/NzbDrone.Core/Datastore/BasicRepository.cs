@@ -158,7 +158,7 @@ namespace NzbDrone.Core.Datastore
             return All().Single();
         }
 
-        public TModel Insert(TModel model)
+        public virtual TModel Insert(TModel model)
         {
             if (model.Id != 0)
             {
@@ -207,7 +207,7 @@ namespace NzbDrone.Core.Datastore
             return $"INSERT INTO {_table} ({sbColumnList.ToString()}) VALUES ({sbParameterList.ToString()}); SELECT last_insert_rowid() id";
         }
 
-        private TModel Insert(IDbConnection connection, IDbTransaction transaction, TModel model)
+        protected internal TModel Insert(IDbConnection connection, IDbTransaction transaction, TModel model)
         {
             SqlBuilderExtensions.LogQuery(_insertSql, model);
 
@@ -220,7 +220,7 @@ namespace NzbDrone.Core.Datastore
             return model;
         }
 
-        public void InsertMany(IList<TModel> models)
+        public virtual void InsertMany(IList<TModel> models)
         {
             if (models.Any(x => x.Id != 0))
             {
@@ -241,7 +241,7 @@ namespace NzbDrone.Core.Datastore
             }
         }
 
-        public TModel Update(TModel model)
+        public virtual TModel Update(TModel model)
         {
             if (model.Id == 0)
             {
@@ -258,7 +258,7 @@ namespace NzbDrone.Core.Datastore
             return model;
         }
 
-        public void UpdateMany(IList<TModel> models)
+        public virtual void UpdateMany(IList<TModel> models)
         {
             if (models.Any(x => x.Id == 0))
             {
@@ -298,7 +298,7 @@ namespace NzbDrone.Core.Datastore
             Delete(x => x.Id == id);
         }
 
-        public void DeleteMany(IEnumerable<int> ids)
+        public virtual void DeleteMany(IEnumerable<int> ids)
         {
             if (ids.Any())
             {
@@ -403,6 +403,11 @@ namespace NzbDrone.Core.Datastore
             sb.Append($" WHERE \"{_keyProperty.Name}\" = @{_keyProperty.Name}");
 
             return sb.ToString();
+        }
+
+        protected internal void Update(IDbConnection connection, IDbTransaction transaction, TModel model)
+        {
+            UpdateFields(connection, transaction, model, _properties);
         }
 
         private void UpdateFields(IDbConnection connection, IDbTransaction transaction, TModel model, List<PropertyInfo> propertiesToUpdate)

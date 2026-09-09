@@ -12,6 +12,8 @@ namespace Sonarr.Api.V5.EpisodeFiles
     public class EpisodeFileResource : RestResource
     {
         public int SeriesId { get; set; }
+        public List<int> QualityTrackIds { get; set; } = [];
+        public List<int> EpisodeIds { get; set; } = [];
         public int SeasonNumber { get; set; }
         public string? RelativePath { get; set; }
         public string? Path { get; set; }
@@ -43,6 +45,8 @@ namespace Sonarr.Api.V5.EpisodeFiles
                 Id = model.Id,
 
                 SeriesId = model.SeriesId,
+                QualityTrackIds = model.TrackFiles?.Value?.Select(f => f.TrackId).Distinct().OrderBy(id => id).ToList() ?? [],
+                EpisodeIds = model.TrackFiles?.Value?.Select(f => f.EpisodeId).Distinct().OrderBy(id => id).ToList() ?? [],
                 SeasonNumber = model.SeasonNumber,
                 RelativePath = model.RelativePath,
                 Path = Path.Combine(series.Path, model.RelativePath),

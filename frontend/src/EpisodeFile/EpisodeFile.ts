@@ -22,4 +22,6 @@ export interface EpisodeFile extends ModelBase {
   releaseType: ReleaseType;
   mediaInfo: MediaInfo;
   qualityCutoffNotMet: boolean;
+  qualityTrackIds?: number[];
+  episodeIds?: number[];
 }

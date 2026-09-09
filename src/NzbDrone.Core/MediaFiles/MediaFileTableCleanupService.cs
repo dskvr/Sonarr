@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using NLog;
 using NzbDrone.Common;
 using NzbDrone.Common.Extensions;
@@ -17,14 +18,17 @@ namespace NzbDrone.Core.MediaFiles
     {
         private readonly IMediaFileService _mediaFileService;
         private readonly IEpisodeService _episodeService;
+        private readonly IEpisodeTrackFileService _trackFileService;
         private readonly Logger _logger;
 
         public MediaFileTableCleanupService(IMediaFileService mediaFileService,
                                             IEpisodeService episodeService,
+                                            IEpisodeTrackFileService trackFileService,
                                             Logger logger)
         {
             _mediaFileService = mediaFileService;
             _episodeService = episodeService;
+            _trackFileService = trackFileService;
             _logger = logger;
         }
 
@@ -32,6 +36,7 @@ namespace NzbDrone.Core.MediaFiles
         {
             var seriesFiles = _mediaFileService.GetFilesBySeries(series.Id);
             var episodes = _episodeService.GetEpisodeBySeries(series.Id);
+            var referencedFiles = _trackFileService.GetForSeries(series.Id).Select(l => l.EpisodeFileId).ToHashSet();
 
             var filesOnDiskKeys = new HashSet<string>(filesOnDisk, PathEqualityComparer.Instance);
 
@@ -49,7 +54,7 @@ namespace NzbDrone.Core.MediaFiles
                         continue;
                     }
 
-                    if (episodes.None(e => e.EpisodeFileId == episodeFile.Id))
+                    if (!referencedFiles.Contains(episodeFile.Id))
                     {
                         _logger.Debug("File [{0}] is not assigned to any episodes, removing from db", episodeFilePath);
                         _mediaFileService.Delete(episodeFile, DeleteMediaFileReason.NoLinkedEpisodes);

@@ -1,3 +1,5 @@
+using NzbDrone.Core.MediaFiles;
+
 namespace NzbDrone.Core.Organizer
 {
     public interface INamingConfigService
@@ -38,6 +40,7 @@ namespace NzbDrone.Core.Organizer
 
         public void Save(NamingConfig namingConfig)
         {
+            using var operationLock = MediaFileOperationLock.AcquireAll();
             _repository.Upsert(namingConfig);
         }
     }

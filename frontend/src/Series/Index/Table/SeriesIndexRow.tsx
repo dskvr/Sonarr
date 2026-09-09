@@ -18,6 +18,7 @@ import { icons } from 'Helpers/Props';
 import useCountryName from 'Internationalization/useCountryName';
 import DeleteSeriesModal from 'Series/Delete/DeleteSeriesModal';
 import EditSeriesModal from 'Series/Edit/EditSeriesModal';
+import QualityTrackNames from 'Series/QualityProfiles/QualityTrackNames';
 import { Statistics } from 'Series/Series';
 import SeriesBanner from 'Series/SeriesBanner';
 import { useSeriesTableOptions } from 'Series/seriesOptionsStore';
@@ -254,7 +255,17 @@ function SeriesIndexRow(props: SeriesIndexRowProps) {
         if (name === 'qualityProfileId') {
           return (
             <VirtualTableRowCell key={name} className={styles[name]}>
-              {qualityProfile?.name ?? ''}
+              {(series.qualityTracks?.filter((track) => track.enabled).length ??
+                0) > 1 ? (
+                <QualityTrackNames
+                  series={series}
+                  trackIds={series.qualityTracks
+                    ?.filter((track) => track.enabled)
+                    .map((track) => track.id)}
+                />
+              ) : (
+                qualityProfile?.name ?? ''
+              )}
             </VirtualTableRowCell>
           );
         }

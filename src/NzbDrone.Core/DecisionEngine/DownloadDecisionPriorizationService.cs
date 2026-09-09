@@ -24,7 +24,7 @@ namespace NzbDrone.Core.DecisionEngine
         public List<DownloadDecision> PrioritizeDecisions(List<DownloadDecision> decisions)
         {
             return decisions.Where(c => c.RemoteEpisode.Series != null)
-                            .GroupBy(c => c.RemoteEpisode.Series.Id, (seriesId, downloadDecisions) =>
+                            .GroupBy(c => (c.RemoteEpisode.Series.Id, TrackId: c.RemoteEpisode.TargetQualityTrackIds?.FirstOrDefault() ?? 0), (key, downloadDecisions) =>
                                 {
                                     return downloadDecisions.OrderByDescending(decision => decision, new DownloadDecisionComparer(_configService, _delayProfileService));
                                 })

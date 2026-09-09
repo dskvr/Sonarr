@@ -44,6 +44,8 @@ public class SeriesController : RestControllerWithSignalR<SeriesResource, NzbDro
     private readonly IMapCoversToLocal _coverMapper;
     private readonly IManageCommandQueue _commandQueueManager;
     private readonly IRootFolderService _rootFolderService;
+    private readonly ISeriesQualityTrackService _qualityTrackService;
+    private readonly IEpisodeTrackFileService _trackFileService;
 
     private readonly LockByIdPool _seriesLockPool = new();
 
@@ -63,7 +65,9 @@ public class SeriesController : RestControllerWithSignalR<SeriesResource, NzbDro
                         SystemFolderValidator systemFolderValidator,
                         QualityProfileExistsValidator qualityProfileExistsValidator,
                         RootFolderExistsValidator rootFolderExistsValidator,
-                        SeriesFolderAsRootFolderValidator seriesFolderAsRootFolderValidator)
+                        SeriesFolderAsRootFolderValidator seriesFolderAsRootFolderValidator,
+                        ISeriesQualityTrackService qualityTrackService,
+                        IEpisodeTrackFileService trackFileService)
         : base(signalRBroadcaster)
     {
         _seriesService = seriesService;
@@ -74,6 +78,8 @@ public class SeriesController : RestControllerWithSignalR<SeriesResource, NzbDro
         _coverMapper = coverMapper;
         _commandQueueManager = commandQueueManager;
         _rootFolderService = rootFolderService;
+        _qualityTrackService = qualityTrackService;
+        _trackFileService = trackFileService;
 
         SharedValidator.RuleFor(s => s.Path).Cascade(CascadeMode.Stop)
             .IsValidPath()
@@ -121,7 +127,22 @@ public class SeriesController : RestControllerWithSignalR<SeriesResource, NzbDro
         }
         else
         {
-            seriesResources.AddRange(_seriesService.GetAllSeries().Select(s => s.ToResource(includeSeasonImages)));
+            var tracks = _qualityTrackService.GetAllTracks();
+            var trackFileCounts = _trackFileService.GetFileCountsByTrack();
+
+            foreach (var track in tracks)
+            {
+                track.EpisodeFileCount = trackFileCounts.GetValueOrDefault(track.Id);
+            }
+
+            var tracksBySeries = tracks.ToLookup(t => t.SeriesId);
+            var allSeries = _seriesService.GetAllSeries();
+
+            foreach (var series in allSeries)
+            {
+                series.QualityTracks = tracksBySeries[series.Id].ToList();
+                seriesResources.Add(series.ToResource(includeSeasonImages));
+            }
         }
 
         MapCoversToLocal(seriesResources.ToArray());
@@ -185,6 +206,8 @@ public class SeriesController : RestControllerWithSignalR<SeriesResource, NzbDro
     [Produces("application/json")]
     public Results<Created<SeriesResource>, NotFound> AddSeries([FromBody] SeriesResource seriesResource)
     {
+        _qualityTrackService.ValidateProfiles(0, seriesResource.QualityProfileId, seriesResource.AdditionalQualityProfileIds);
+
         var series = _addSeriesService.AddSeries(seriesResource.ToModel());
 
         return TypedCreated(series.Id);
@@ -196,26 +219,31 @@ public class SeriesController : RestControllerWithSignalR<SeriesResource, NzbDro
     public Results<Accepted<SeriesResource>, NotFound> UpdateSeries([FromBody] SeriesResource seriesResource, [FromQuery] bool moveFiles = false)
     {
         var series = _seriesService.GetSeries(seriesResource.Id);
+        _qualityTrackService.ValidateProfiles(series.Id, seriesResource.QualityProfileId, seriesResource.AdditionalQualityProfileIds);
+
+        var sourcePath = series.Path;
+
+        var model = seriesResource.ToModel(series);
 
         if (moveFiles)
         {
-            var sourcePath = series.Path;
-            var destinationPath = seriesResource.Path;
+            model.Path = sourcePath;
+        }
 
+        _seriesService.UpdateSeries(model);
+
+        if (moveFiles)
+        {
             _commandQueueManager.Push(new MoveSeriesCommand
             {
                 SeriesId = series.Id,
                 SourcePath = sourcePath,
-                DestinationPath = destinationPath
+                DestinationPath = seriesResource.Path
             },
                 trigger: CommandTrigger.Manual);
         }
 
-        var model = seriesResource.ToModel(series);
-
-        _seriesService.UpdateSeries(model);
-
-        BroadcastResourceChange(ModelAction.Updated, seriesResource);
+        BroadcastResourceChange(ModelAction.Updated, series.Id);
 
         return TypedAccepted(seriesResource.Id);
     }

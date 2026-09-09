@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using FizzWare.NBuilder;
 using FluentAssertions;
 using Moq;
@@ -110,6 +112,66 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
             Mocker.GetMock<IParsingService>()
                   .Setup(s => s.GetSeries(It.IsAny<string>()))
                   .Returns(_trackedDownload.RemoteEpisode.Series);
+        }
+
+        [Test]
+        public void should_reconstruct_completion_from_target_history_and_its_linked_file()
+        {
+            _trackedDownload.RemoteEpisode.TargetQualityTrackIds = [20];
+            _trackedDownload.ImportItem = _trackedDownload.DownloadItem;
+            _episode1.EpisodeFileId = 50;
+            _episode1.TrackFiles = new List<EpisodeTrackFile>
+            {
+                new() { EpisodeId = 1, TrackId = 10, EpisodeFileId = 50 },
+                new() { EpisodeId = 1, TrackId = 20, EpisodeFileId = 60 }
+            };
+            Mocker.GetMock<IHistoryService>().Setup(s => s.FindByDownloadId(It.IsAny<string>())).Returns(new List<EpisodeHistory>
+            {
+                new() { EpisodeId = 1, Date = DateTime.UtcNow, EventType = EpisodeHistoryEventType.DownloadFolderImported, Data = new Dictionary<string, string> { ["qualityTrackIds"] = "[20]" } }
+            });
+            Mocker.GetMock<IEpisodeService>().Setup(s => s.GetEpisodes(It.IsAny<IEnumerable<int>>())).Returns(new List<Episode> { _episode1 });
+            Mocker.GetMock<IMediaFileService>().Setup(s => s.GetFiles(It.IsAny<IEnumerable<int>>())).Returns(new List<EpisodeFile> { new() { Id = 60 } });
+            Mocker.SetConstant<ITrackedDownloadAlreadyImported>(Mocker.Resolve<TrackedDownloadAlreadyImported>());
+
+            Subject.VerifyImport(_trackedDownload, []).Should().BeTrue();
+
+            Mocker.GetMock<IMediaFileService>().Verify(s => s.GetFiles(It.Is<IEnumerable<int>>(ids => ids.SequenceEqual(new[] { 60 }))), Times.Once());
+            _trackedDownload.State.Should().Be(TrackedDownloadState.Imported);
+            VerifyEventPublished<DownloadCompletedEvent>();
+        }
+
+        [Test]
+        public void should_keep_shared_download_incomplete_until_all_targets_imported()
+        {
+            _trackedDownload.RemoteEpisode.TargetQualityTrackIds = [10, 20];
+            var local = new LocalEpisode { Series = _trackedDownload.RemoteEpisode.Series, Episodes = [_episode1], TargetQualityTrackIds = [10] };
+            var result = new ImportResult(new ImportDecision(local), new EpisodeFile { Id = 1 });
+
+            Subject.VerifyImport(_trackedDownload, [result]).Should().BeFalse();
+            VerifyEventNotPublished<DownloadCompletedEvent>();
+        }
+
+        [Test]
+        public void should_complete_shared_download_after_one_file_satisfies_both_targets()
+        {
+            _trackedDownload.RemoteEpisode.TargetQualityTrackIds = [10, 20];
+            var local = new LocalEpisode { Series = _trackedDownload.RemoteEpisode.Series, Episodes = [_episode1], TargetQualityTrackIds = [10, 20] };
+            var result = new ImportResult(new ImportDecision(local), new EpisodeFile { Id = 1 });
+
+            Subject.VerifyImport(_trackedDownload, [result]).Should().BeTrue();
+            _trackedDownload.State.Should().Be(TrackedDownloadState.Imported);
+            VerifyEventPublished<DownloadCompletedEvent>();
+        }
+
+        [Test]
+        public void should_not_count_duplicate_results_as_another_episode_target()
+        {
+            _trackedDownload.RemoteEpisode.TargetQualityTrackIds = [10];
+            _trackedDownload.RemoteEpisode.Episodes.Add(_episode2);
+            var local = new LocalEpisode { Series = _trackedDownload.RemoteEpisode.Series, Episodes = [_episode1], TargetQualityTrackIds = [10] };
+            var result = new ImportResult(new ImportDecision(local), new EpisodeFile { Id = 1 });
+
+            Subject.VerifyImport(_trackedDownload, [result, result]).Should().BeFalse();
         }
 
         [Test]

@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using NLog;
-using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
@@ -72,7 +70,7 @@ namespace NzbDrone.Core.Tv
                 if (series.Status != SeriesStatusType.Deleted)
                 {
                     series.Status = SeriesStatusType.Deleted;
-                    _seriesService.UpdateSeries(series, publishUpdatedEvent: false);
+                    _seriesService.UpdateSeriesMetadata(series, publishUpdatedEvent: false);
                     _logger.Debug("Series marked as deleted on tvdb for {0}", series.Title);
                     _eventAggregator.PublishEvent(new SeriesUpdatedEvent(series));
                 }
@@ -113,19 +111,9 @@ namespace NzbDrone.Core.Tv
             series.Certification = seriesInfo.Certification;
             series.OriginalCountry = seriesInfo.OriginalCountry;
 
-            try
-            {
-                series.Path = new DirectoryInfo(series.Path).FullName;
-                series.Path = series.Path.GetActualCasing();
-            }
-            catch (Exception e)
-            {
-                _logger.Warn(e, "Couldn't update series path for " + series.Path);
-            }
-
             series.Seasons = UpdateSeasons(series, seriesInfo);
 
-            _seriesService.UpdateSeries(series, publishUpdatedEvent: false);
+            _seriesService.UpdateSeriesMetadata(series, publishUpdatedEvent: false);
             _refreshEpisodeService.RefreshEpisodeInfo(series, episodes);
 
             _logger.Debug("Finished series refresh for {0}", series.Title);
@@ -204,7 +192,7 @@ namespace NzbDrone.Core.Tv
 
             if (tagsUpdated)
             {
-                _seriesService.UpdateSeries(series);
+                _seriesService.UpdateSeriesMetadata(series);
             }
         }
 

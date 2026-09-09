@@ -36,6 +36,8 @@ import DeleteSeriesModal from 'Series/Delete/DeleteSeriesModal';
 import EditSeriesModal from 'Series/Edit/EditSeriesModal';
 import SeriesHistoryModal from 'Series/History/SeriesHistoryModal';
 import MonitoringOptionsModal from 'Series/MonitoringOptions/MonitoringOptionsModal';
+import QualityTrackSummary from 'Series/QualityProfiles/QualityTrackSummary';
+import RetainedVersions from 'Series/QualityProfiles/RetainedVersions';
 import { Image, SeriesStatus, Statistics } from 'Series/Series';
 import SeriesGenres from 'Series/SeriesGenres';
 import SeriesPoster from 'Series/SeriesPoster';
@@ -791,6 +793,13 @@ function SeriesDetails({ seriesId }: SeriesDetailsProps) {
                     episodeFileCount={episodeFileCount}
                   />
                 </div>
+
+                <QualityTrackSummary
+                  seriesId={seriesId}
+                  tracks={statistics.qualityTracks}
+                  showOverlap={true}
+                />
+                <RetainedVersions series={series} />
 
                 <div className={styles.overview}>{overview}</div>
 

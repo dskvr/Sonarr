@@ -8,6 +8,7 @@ namespace NzbDrone.Core.DecisionEngine
     {
         public RemoteEpisode RemoteEpisode { get; private set; }
         public IEnumerable<DownloadRejection> Rejections { get; private set; }
+        public List<DownloadDecision> QualityTrackDecisions { get; set; } = [];
 
         public bool Approved => !Rejections.Any();
 
