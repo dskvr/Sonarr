@@ -122,7 +122,7 @@ namespace NzbDrone.Core.MediaFiles
                 var resolvedDestination = MediaFileRecoveryPaths.ResolveFilePath(destinationPath, resolvedDirectories);
                 if (_mediaFileService.GetFilesBySeries(series.Id).Any(other => other.Id != file.Id &&
                     HasSameStem(MediaFileRecoveryPaths.ResolveFilePath(Path.Combine(series.Path, other.RelativePath), resolvedDirectories), resolvedDestination)) ||
-                    (!sourcePath.PathEquals(destinationPath) && _diskProvider.FileExists(destinationPath)))
+                    (!sourcePath.PathEquals(destinationPath, StringComparison.OrdinalIgnoreCase) && _diskProvider.FileExists(destinationPath)))
                 {
                     throw new DestinationAlreadyExistsException("Destination is used by another file. Adjust the episode naming format before retrying.");
                 }

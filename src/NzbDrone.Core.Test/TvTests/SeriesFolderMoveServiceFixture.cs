@@ -635,7 +635,7 @@ namespace NzbDrone.Core.Test.TvTests
             Directory.CreateDirectory(Path.GetDirectoryName(_destination));
             Directory.Move(_source, _destination);
             var moved = Path.Combine(_destination, "Season 3");
-            File.Move(moved, moved + ".sonarr-link-backup-" + journal.OperationId);
+            Directory.Move(moved, moved + ".sonarr-link-backup-" + journal.OperationId);
             Directory.CreateSymbolicLink(moved + ".sonarr-link-new-" + journal.OperationId, replacement);
 
             Mocker.Resolve<SeriesFolderMoveService>().Recover(_series);

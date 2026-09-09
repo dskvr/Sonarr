@@ -457,7 +457,7 @@ namespace NzbDrone.Core.Test.TvTests
         public void should_preserve_replacements_of_the_original_root_link_after_commit(bool file)
         {
             var receipt = RootCopyReceipt(true, true);
-            File.Delete(_source);
+            Directory.Delete(_source);
             var marker = _source;
             if (!file)
             {
@@ -476,7 +476,7 @@ namespace NzbDrone.Core.Test.TvTests
         public void should_finish_root_link_cleanup_when_source_link_was_already_removed()
         {
             var receipt = RootCopyReceipt(true, true);
-            File.Delete(_source);
+            Directory.Delete(_source);
             Subject.Recover(_series);
             AssertContents(receipt.Shared);
             new DirectoryInfo(_destination).LinkTarget.Should().Be(receipt.Shared);
@@ -917,7 +917,7 @@ namespace NzbDrone.Core.Test.TvTests
                     File.Copy(source, destination, overwrite);
                     if (!swapped)
                     {
-                        File.Delete(alias);
+                        Directory.Delete(alias);
                         Directory.CreateSymbolicLink(alias, second);
                         swapped = true;
                     }
@@ -959,9 +959,9 @@ namespace NzbDrone.Core.Test.TvTests
                 var stream = File.OpenRead(path);
                 if (_stored.Path == _destination &&
                     (path == Path.Combine(_source, "poster.jpg") || path == Path.Combine(originalRoot, "poster.jpg")) &&
-                    ++verificationReads == 2)
+                    ++verificationReads == 1)
                 {
-                    File.Delete(alias);
+                    Directory.Delete(alias);
                     Directory.CreateSymbolicLink(alias, victimParent);
                     swapped = true;
                 }
